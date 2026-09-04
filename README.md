@@ -106,8 +106,13 @@ Requires macOS with Xcode and a booted simulator.
 ### A. Everything except the tree and the taps, with no setup
 
 ```bash
-npx -y @mgcrea/mcp-ios-simulator
+npx -y -p @mgcrea/mcp-ios-simulator ios-simulator-mcp
 ```
+
+`-p` names the package and the bin separately. The shorter
+`npx -y @mgcrea/mcp-ios-simulator` does **not** work: the package ships two
+binaries and neither is named after the package, so npx cannot choose between
+them and exits with "could not determine executable to run".
 
 `list`, `list_apps`, `screenshot`, `diagnostics`, `power`, `install`, `launch`,
 `open_url`, `set_environment`, `push` and `erase` all work immediately.

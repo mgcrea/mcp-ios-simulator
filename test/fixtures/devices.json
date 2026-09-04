@@ -1,0 +1,77 @@
+{
+  "devices": {
+    "com.apple.CoreSimulator.SimRuntime.iOS-26-3": [
+      {
+        "availabilityError": "runtime profile not found using \"System\" match policy",
+        "dataPath": "/Users/example/Library/Developer/CoreSimulator/Devices/D5B862C3-17FC-4564-B1A9-CB314309519E/data",
+        "dataPathSize": 18337792,
+        "logPath": "/Users/example/Library/Logs/CoreSimulator/D5B862C3-17FC-4564-B1A9-CB314309519E",
+        "udid": "D5B862C3-17FC-4564-B1A9-CB314309519E",
+        "isAvailable": false,
+        "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro",
+        "state": "Shutdown",
+        "name": "iPhone 17 Pro"
+      },
+      {
+        "availabilityError": "runtime profile not found using \"System\" match policy",
+        "dataPath": "/Users/example/Library/Developer/CoreSimulator/Devices/D0B017F4-2CC1-408F-A021-8B2F6FDF5CBD/data",
+        "dataPathSize": 18337792,
+        "logPath": "/Users/example/Library/Logs/CoreSimulator/D0B017F4-2CC1-408F-A021-8B2F6FDF5CBD",
+        "udid": "D0B017F4-2CC1-408F-A021-8B2F6FDF5CBD",
+        "isAvailable": false,
+        "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max",
+        "state": "Shutdown",
+        "name": "iPhone 17 Pro Max"
+      },
+      {
+        "availabilityError": "runtime profile not found using \"System\" match policy",
+        "dataPath": "/Users/example/Library/Developer/CoreSimulator/Devices/095100F4-FF86-44A9-9084-86649EE1BFC3/data",
+        "dataPathSize": 18337792,
+        "logPath": "/Users/example/Library/Logs/CoreSimulator/095100F4-FF86-44A9-9084-86649EE1BFC3",
+        "udid": "095100F4-FF86-44A9-9084-86649EE1BFC3",
+        "isAvailable": false,
+        "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-17e",
+        "state": "Shutdown",
+        "name": "iPhone 17e"
+      }
+    ],
+    "com.apple.CoreSimulator.SimRuntime.iOS-26-5": [
+      {
+        "lastBootedAt": "2026-09-04T20:54:08Z",
+        "dataPath": "/Users/example/Library/Developer/CoreSimulator/Devices/C4AB4BE0-C0BC-436C-8C03-8F87330DFFA5/data",
+        "dataPathSize": 5984169984,
+        "logPath": "/Users/example/Library/Logs/CoreSimulator/C4AB4BE0-C0BC-436C-8C03-8F87330DFFA5",
+        "udid": "C4AB4BE0-C0BC-436C-8C03-8F87330DFFA5",
+        "isAvailable": true,
+        "logPathSize": 827392,
+        "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro",
+        "state": "Booted",
+        "name": "iPhone 17 Pro"
+      },
+      {
+        "lastBootedAt": "2026-09-03T21:05:29Z",
+        "dataPath": "/Users/example/Library/Developer/CoreSimulator/Devices/C0386ADB-0B1D-4FD1-AF22-D2AB6A142901/data",
+        "dataPathSize": 4613435392,
+        "logPath": "/Users/example/Library/Logs/CoreSimulator/C0386ADB-0B1D-4FD1-AF22-D2AB6A142901",
+        "udid": "C0386ADB-0B1D-4FD1-AF22-D2AB6A142901",
+        "isAvailable": true,
+        "logPathSize": 847872,
+        "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max",
+        "state": "Shutdown",
+        "name": "appshot-iphone"
+      },
+      {
+        "lastBootedAt": "2026-09-04T06:22:23Z",
+        "dataPath": "/Users/example/Library/Developer/CoreSimulator/Devices/DA5DF0FC-8D0D-4B6E-A564-74E7FBC35E6C/data",
+        "dataPathSize": 2815733760,
+        "logPath": "/Users/example/Library/Logs/CoreSimulator/DA5DF0FC-8D0D-4B6E-A564-74E7FBC35E6C",
+        "udid": "DA5DF0FC-8D0D-4B6E-A564-74E7FBC35E6C",
+        "isAvailable": true,
+        "logPathSize": 196608,
+        "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max",
+        "state": "Shutdown",
+        "name": "iPhone 17 Pro Max"
+      }
+    ]
+  }
+}

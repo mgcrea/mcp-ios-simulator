@@ -1,0 +1,16 @@
+{
+  "devicetypes": [
+    {
+      "identifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro",
+      "name": "iPhone 17 Pro",
+      "bundlePath": "/Library/Developer/CoreSimulator/Profiles/DeviceTypes/iPhone 17 Pro.simdevicetype",
+      "modelIdentifier": "iPhone18,1"
+    },
+    {
+      "identifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-Air",
+      "name": "iPhone Air",
+      "bundlePath": "/Library/Developer/CoreSimulator/Profiles/DeviceTypes/iPhone Air.simdevicetype",
+      "modelIdentifier": "iPhone18,4"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "runtimes": [
+    {
+      "identifier": "com.apple.CoreSimulator.SimRuntime.iOS-26-4",
+      "name": "iOS 26.4",
+      "version": "26.4",
+      "isAvailable": true
+    },
+    {
+      "identifier": "com.apple.CoreSimulator.SimRuntime.iOS-26-4",
+      "name": "iOS 26.4",
+      "version": "26.4.1",
+      "isAvailable": true
+    },
+    {
+      "identifier": "com.apple.CoreSimulator.SimRuntime.iOS-26-5",
+      "name": "iOS 26.5",
+      "version": "26.5",
+      "isAvailable": true
+    }
+  ]
+}

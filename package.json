@@ -19,7 +19,8 @@
   },
   "bin": {
     "ios-simulator-mcp": "dist/cli.js",
-    "ios-simulator-wda": "scripts/wda.sh"
+    "ios-simulator-wda": "scripts/wda.sh",
+    "mcp-ios-simulator": "dist/cli.js"
   },
   "files": [
     "dist",

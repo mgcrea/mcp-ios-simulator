@@ -2,7 +2,7 @@
   "mcpServers": {
     "ios-simulator": {
       "command": "npx",
-      "args": ["-y", "-p", "@mgcrea/mcp-ios-simulator", "ios-simulator-mcp"],
+      "args": ["-y", "@mgcrea/mcp-ios-simulator"],
       "env": {
         "IOS_SIMULATOR_ID": "booted"
       }

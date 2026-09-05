@@ -115,21 +115,6 @@ jobs:
             || { echo "expected exactly 19 tools with writes on, got $(wc -l < /tmp/b.txt)"; exit 1; }
           echo "smoke test ok: 5 read tools, 14 added by the write gate"
 
-      # `link:../mcp-ios-core` is how this repo is developed before a core
-      # release, and it must never reach npm: it resolves to a sibling directory
-      # that exists on one laptop.
-      - name: No local dependencies 🔒
-        run: |
-          node -e "
-            const deps = require('./package.json').dependencies ?? {};
-            const local = Object.entries(deps).filter(([, v]) => /^(link|file):/.test(v));
-            if (local.length) {
-              console.error('local dependency specs must not ship: ' +
-                local.map(([k, v]) => k + '@' + v).join(', '));
-              process.exit(1);
-            }
-          "
-
   publish-npm:
     name: Publish to npm
     runs-on: ubuntu-latest

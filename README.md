@@ -136,38 +136,46 @@ See [.mcp.json.example](.mcp.json.example).
 
 ## Tools
 
-Nineteen. Five are read-only; the other fourteen disappear with
+Twenty-one. Six are read-only; the other fifteen disappear with
 `IOS_SIMULATOR_ALLOW_WRITES=0`.
 
-| Tool                            | Writes?       | What it does                                                             |
-| ------------------------------- | ------------- | ------------------------------------------------------------------------ |
-| `ios_simulator_list`            |               | Every simulator, with state and whether its runtime is installed         |
-| `ios_simulator_diagnostics`     |               | Both lanes, the resolved target, the geometry, and who owns the WDA port |
-| `ios_simulator_list_apps`       |               | Installed apps, with bundle id and host-path data container              |
-| `ios_simulator_screenshot`      |               | The screen, in point space — **no runner needed**                        |
-| `ios_simulator_ui_tree`         |               | Addressable elements with precomputed tap points                         |
-| `ios_simulator_tap`             | ✓             | Tap a point                                                              |
-| `ios_simulator_tap_element`     | ✓             | Tap by identifier, label or predicate                                    |
-| `ios_simulator_swipe`           | ✓             | Drag between two points                                                  |
-| `ios_simulator_type`            | ✓             | Type into the focused field, or a named one                              |
-| `ios_simulator_press_button`    | ✓             | Home                                                                     |
-| `ios_simulator_power`           | ✓             | Boot or shut down; never implicit                                        |
-| `ios_simulator_erase`           | ✓ **confirm** | Wipe to factory — the only irreversible tool                             |
-| `ios_simulator_install`         | ✓             | Install a simulator `.app`                                               |
-| `ios_simulator_launch`          | ✓             | Launch, with fixture arguments and captured output                       |
-| `ios_simulator_terminate`       | ✓             | Kill a running app                                                       |
-| `ios_simulator_open_url`        | ✓             | Deep links and universal links                                           |
-| `ios_simulator_set_environment` | ✓             | Appearance, Dynamic Type, contrast, status bar, location, permissions    |
-| `ios_simulator_push`            | ✓             | A remote notification, with no APNs certificate                          |
-| `ios_simulator_restart_wda`     | ✓             | Start or restart the runner, detached                                    |
+| Tool                             | Writes?       | What it does                                                             |
+| -------------------------------- | ------------- | ------------------------------------------------------------------------ |
+| `ios_simulator_list`             |               | Every simulator, with state and whether its runtime is installed         |
+| `ios_simulator_diagnostics`      |               | Both lanes, the resolved target, the geometry, and who owns the WDA port |
+| `ios_simulator_list_apps`        |               | Installed apps, with bundle id and host-path data container              |
+| `ios_simulator_screenshot`       |               | The screen, in point space — **no runner needed**                        |
+| `ios_simulator_ui_tree`          |               | Addressable elements with precomputed tap points                         |
+| `ios_simulator_wait_for_element` |               | Poll until something appears, or goes away                               |
+| `ios_simulator_tap`              | ✓             | Tap a point                                                              |
+| `ios_simulator_tap_element`      | ✓             | Tap by identifier, label or predicate                                    |
+| `ios_simulator_swipe`            | ✓             | Drag between two points                                                  |
+| `ios_simulator_type`             | ✓             | Type into the focused field, or a named one                              |
+| `ios_simulator_press_button`     | ✓             | Home                                                                     |
+| `ios_simulator_power`            | ✓             | Boot or shut down; never implicit                                        |
+| `ios_simulator_erase`            | ✓ **confirm** | Wipe to factory — the only irreversible tool                             |
+| `ios_simulator_install`          | ✓             | Install a simulator `.app`                                               |
+| `ios_simulator_launch`           | ✓             | Launch, with fixture arguments and captured output                       |
+| `ios_simulator_terminate`        | ✓             | Kill a running app                                                       |
+| `ios_simulator_open_url`         | ✓             | Deep links and universal links                                           |
+| `ios_simulator_set_environment`  | ✓             | Appearance, Dynamic Type, contrast, status bar, location, permissions    |
+| `ios_simulator_add_media`        | ✓             | Seed the photo library — the way around the missing camera               |
+| `ios_simulator_push`             | ✓             | A remote notification, with no APNs certificate                          |
+| `ios_simulator_restart_wda`      | ✓             | Start or restart the runner, detached                                    |
 
 Deliberately absent: `create`, `clone`, `delete`, `rename`, `upgrade` and `pair`
 (fleet management, not driving, and `delete all` is a footgun with no upside);
 `get_app_container` (`list_apps` already returns the path); `uninstall`
-(`install` overwrites, and `erase` covers first-run properly); `addmedia`,
-`keychain`, `pbcopy`, `spawn`, `diagnose` and `recordVideo` (real capabilities
-that an agent would use approximately never, and every tool costs listing bytes
-on every connect).
+(`install` overwrites, and `erase` covers first-run properly); `keychain`,
+`pbcopy`, `spawn`, `diagnose` and `recordVideo` (real capabilities that an agent
+would use approximately never, and every tool costs listing bytes on every
+connect).
+
+`addmedia` was on that list until 0.2.0, and it was the wrong call. A simulator
+has no camera, so seeding the photo library is not a nice-to-have — it is the
+only way an app whose first step is "choose a photo" can be driven here at all.
+Anyone hitting that had to drop out to a shell, which is exactly what these
+tools exist to avoid.
 
 ## Traps worth knowing
 
@@ -198,6 +206,17 @@ All measured on Xcode 26.6 (17F113).
   every later screenshot.
 - **`simctl launch` environment variables need a `SIMCTL_CHILD_` prefix** on the
   calling process, not a flag.
+- **A label belongs to the control _and_ to every container around it.**
+  WebDriverAgent answers depth-first, so an unqualified label match lands on the
+  navigation bar as readily as on the button — and a tap on a container does
+  nothing while reporting success. `tap_element` narrows a label to the
+  interactive types first, and says `preferredControl` when it did.
+- **`isVisible` is not always truthful.** A `PHPicker` presented over Safari
+  reports all nine of its asset cells `isVisible: "0"` while they are on screen
+  and tappable — a synthesised tap on one opens the preview. The default
+  `ui_tree` filter drops them, which is why the result carries a `filtered`
+  tally: a short list that has been filtered and a screen that is genuinely bare
+  are otherwise the same answer.
 - **`simctl install` wants a `.app` bundle directory** built for the simulator —
   an `.ipa` or a device build fails with "No such file or directory", which reads
   like a path typo.

@@ -44,6 +44,7 @@ export const createServer = (opts: CreateServerOptions): CreatedServer => {
     execTimeoutMs: config.execTimeoutMs,
     wdaTimeoutMs: config.wdaTimeoutMs,
     wdaPort: config.wdaPort,
+    allowWrites: config.allowWrites,
     ...(config.wdaUrl ? { wdaUrl: config.wdaUrl } : {}),
     ...(config.simulatorId ? { defaultSimulatorId: config.simulatorId } : {}),
     ...(opts.exec ? { exec: opts.exec } : {}),

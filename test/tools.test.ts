@@ -8,6 +8,7 @@ import {
   ABSENT_CONFIG,
   BOOTED_UDID,
   connect,
+  DEVICES_JSON,
   execMock,
   spawnMock,
   TINY_PNG,
@@ -30,6 +31,9 @@ const READ_TOOLS = [
   "ios_simulator_list_apps",
   "ios_simulator_screenshot",
   "ios_simulator_ui_tree",
+  // Observing, so it survives the write gate: waiting for a screen to finish
+  // loading is something a read-only session needs at least as much.
+  "ios_simulator_wait_for_element",
 ];
 
 describe("the write gate", () => {
@@ -38,7 +42,7 @@ describe("the write gate", () => {
   // failing CI over is a tool silently *joining* it.
   it("registers everything by default, because a simulator is disposable", async () => {
     const names = await (await connect()).toolNames();
-    expect(names).toHaveLength(19);
+    expect(names).toHaveLength(21);
     expect(names).toContain("ios_simulator_tap");
     expect(names).toContain("ios_simulator_erase");
   });
@@ -148,8 +152,23 @@ describe("the screen", () => {
   it("says the runner is not up, and that screenshots still work, when WDA is down", async () => {
     const result = await (await connect({}, { fetch: refusing })).call("ios_simulator_ui_tree");
     expect(result.isToolError).toBe(true);
+    // The fix for the reported failure: a remedy that names this server's own
+    // tool, not a shell command. The runner tool spawns detached, so it is
+    // strictly better than the npx form a caller was previously sent to.
+    expect(String(result.remedy)).toContain("ios_simulator_restart_wda");
+    expect(String(result.remedy)).not.toContain("npx");
+    expect(String(result.remedy)).toContain("screenshots go through simctl");
+  });
+
+  it("falls back to the shell recipe when the runner tool is not registered", async () => {
+    // With writes off `ios_simulator_restart_wda` does not exist, and naming it
+    // would be the same mistake pointed the other way.
+    const result = await (
+      await connect({ IOS_SIMULATOR_ALLOW_WRITES: "0" }, { fetch: refusing })
+    ).call("ios_simulator_ui_tree");
+    expect(result.isToolError).toBe(true);
     expect(String(result.remedy)).toContain("wda.sh");
-    expect(String(result.remedy)).toContain("no Apple Developer team");
+    expect(String(result.remedy)).not.toContain("ios_simulator_restart_wda");
   });
 });
 
@@ -259,6 +278,39 @@ describe("staging the environment", () => {
     expect(result.state).toMatchObject({ appearance: "light" });
   });
 
+  it("seeds the photo library, which is the way around the missing camera", async () => {
+    const log: ExecCall[] = [];
+    const result = await (
+      await connect({}, { exec: execMock({ log }) })
+    ).call("ios_simulator_add_media", {
+      paths: ["/fixtures/monstera.jpg", "/fixtures/clip.mov"],
+    });
+    expect(result.isToolError).toBe(false);
+    // `addmedia` is variadic and takes plain argv, so unlike `push` there is no
+    // temp file in the middle.
+    const argv = log.map((call) => call.args.join(" "));
+    expect(
+      argv.some(
+        (a) =>
+          a.includes("addmedia") &&
+          a.includes("/fixtures/monstera.jpg") &&
+          a.includes("/fixtures/clip.mov"),
+      ),
+    ).toBe(true);
+  });
+
+  it("refuses a relative media path, which simctl answers unhelpfully", async () => {
+    // simctl says "No such file or directory", which reads like a typo in the
+    // filename rather than a statement about the working directory.
+    const result = await (
+      await connect()
+    ).call("ios_simulator_add_media", {
+      paths: ["./monstera.jpg"],
+    });
+    expect(result.isToolError).toBe(true);
+    expect(String(result.error)).toContain("absolute");
+  });
+
   it("refuses a status_bar with no fields rather than calling simctl with none", async () => {
     const result = await (
       await connect()
@@ -293,6 +345,28 @@ describe("staging the environment", () => {
       payload: { aps: { alert: "x".repeat(5000) } },
     });
     expect(String(huge.error)).toContain("4096");
+  });
+});
+
+describe("listing simulators", () => {
+  it("leaves out the orphans nobody can use, and says how many it left out", async () => {
+    const result = await (await connect()).call("ios_simulator_list");
+    const rows = result.simulators as { available: boolean }[];
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((sim) => sim.available !== false)).toBe(true);
+    // Still answerable from here — the count and the fix stay in the result.
+    expect(result.unavailable).toBeGreaterThan(0);
+    expect(String(result.note)).toContain("include_unavailable");
+  });
+
+  it("brings them back, with the reason, when asked", async () => {
+    const result = await (
+      await connect()
+    ).call("ios_simulator_list", {
+      include_unavailable: true,
+    });
+    const rows = result.simulators as { available: boolean }[];
+    expect(rows.some((sim) => sim.available === false)).toBe(true);
   });
 });
 
@@ -365,6 +439,41 @@ describe("diagnostics", () => {
     // context than the rest of the report put together.
     expect((result.simulators as unknown[]).length).toBeLessThanOrEqual(2);
     expect(result.counts).toMatchObject({ booted: 1 });
+  });
+
+  it("names the tool that starts the runner, not a shell command", async () => {
+    const result = await (await connect({}, { fetch: refusing })).call("ios_simulator_diagnostics");
+    // The reported failure: diagnostics diagnosed a dead runner perfectly and
+    // then sent the reader out of the toolset to `npx … ios-simulator-wda run`,
+    // which dies with the conversation. restart_wda spawns detached.
+    expect(String(result.nextSteps)).toContain("ios_simulator_restart_wda");
+    expect(String(result.nextSteps)).not.toContain("npx");
+  });
+
+  it("orders the boot before the runner, because the runner requires a booted one", async () => {
+    const nothingBooted = DEVICES_JSON.replaceAll('"Booted"', '"Shutdown"');
+    const result = await (
+      await connect(
+        {},
+        { exec: execMock({ overrides: { "list devices": nothingBooted } }), fetch: refusing },
+      )
+    ).call("ios_simulator_diagnostics");
+    const steps = result.nextSteps as string[];
+    const boot = steps.findIndex((step) => step.includes("ios_simulator_power"));
+    const runner = steps.findIndex((step) => step.includes("ios_simulator_restart_wda"));
+    expect(boot).toBeGreaterThanOrEqual(0);
+    expect(runner).toBeGreaterThan(boot);
+    // Two independent bullets left the reader to discover the dependency by
+    // hitting it; the runner step now says out loud that it comes second.
+    expect(steps[runner]).toContain("once it is booted");
+  });
+
+  it("offers the shell recipe instead when the runner tool is not registered", async () => {
+    const result = await (
+      await connect({ IOS_SIMULATOR_ALLOW_WRITES: "0" }, { fetch: refusing })
+    ).call("ios_simulator_diagnostics");
+    expect(String(result.nextSteps)).toContain("wda.sh");
+    expect(String(result.nextSteps)).not.toContain("ios_simulator_restart_wda");
   });
 
   it("counts the unavailable ones and says how to clear them", async () => {

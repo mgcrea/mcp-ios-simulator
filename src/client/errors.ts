@@ -19,21 +19,44 @@ export const TOOLCHAIN_REMEDY =
   "different xcrun.";
 
 /**
- * How to get the runner up. Much shorter than the device server's equivalent,
- * and that is the headline difference between the two: a simulator runner needs
- * no Apple team, no signing, no trust prompt and no tunnel.
+ * How to get the runner up, from a shell.
+ *
+ * Much shorter than the device server's equivalent, and that is the headline
+ * difference between the two: a simulator runner needs no Apple team, no
+ * signing, no trust prompt and no tunnel.
+ *
+ * This is the *fallback*. It stays because it is the only route when writes are
+ * off, and because it is what a person setting the server up for the first time
+ * needs — but a remedy that sends a caller holding ios_simulator_restart_wda out
+ * to a terminal is a remedy that wastes the tool it already has.
  */
-export const START_RUNNER_REMEDY =
+export const START_RUNNER_SCRIPT_REMEDY =
   "Build and start the runner with `scripts/wda.sh setup` then `scripts/wda.sh run` (or " +
   "`npx -p @mgcrea/mcp-ios-simulator ios-simulator-wda run` from an npm install) and leave it " +
   "open — the HTTP server is the XCTest process, so it stops when that command does. It needs no " +
   "Apple Developer team: a simulator build is not signed.";
 
+/** The same thing, done with this server's own tool. */
+export const START_RUNNER_TOOL_REMEDY =
+  "Start it with ios_simulator_restart_wda, which spawns the runner detached so it outlives this " +
+  "conversation. Give it about fifteen seconds, then check ios_simulator_diagnostics for " +
+  "`wda.reachable`.";
+
+/**
+ * How to get the runner up, in whichever way the caller can actually reach.
+ *
+ * `ios_simulator_restart_wda` is registered only when writes are on, so naming
+ * it unconditionally would be the same mistake this fixes, pointed the other
+ * way: a remedy naming a tool that is not in the list.
+ */
+export const startRunnerRemedy = (allowWrites: boolean): string =>
+  allowWrites ? START_RUNNER_TOOL_REMEDY : START_RUNNER_SCRIPT_REMEDY;
+
 /** What to do when WebDriverAgent does not answer at all. */
-export const WDA_UNAVAILABLE_REMEDY =
-  `${START_RUNNER_REMEDY} Everything except ios_simulator_ui_tree and the input tools works ` +
-  "without it — screenshots go through simctl. If something else already forwards the port, set " +
-  "IOS_SIMULATOR_WDA_URL.";
+export const wdaUnavailableRemedy = (allowWrites: boolean): string =>
+  `${startRunnerRemedy(allowWrites)} Everything except ios_simulator_ui_tree and the input ` +
+  "tools works without it — screenshots go through simctl. If something else already forwards " +
+  "the port, set IOS_SIMULATOR_WDA_URL.";
 
 /** No simulator matched, or several did and none was named. */
 export class SimulatorNotFoundError extends IosError {

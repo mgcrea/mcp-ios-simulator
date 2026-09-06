@@ -280,6 +280,20 @@ export class Simctl {
   }
 
   /**
+   * Put photos and videos in the simulator's library.
+   *
+   * `addmedia` is variadic and takes the paths as plain argv, so unlike `push`
+   * this needs no temp file. It is the one route around the simulator's missing
+   * camera: an app that reads from the photo library can be exercised end to
+   * end, while one that insists on a live capture still cannot.
+   */
+  async addMedia(udid: string, paths: string[]): Promise<void> {
+    assertNotBulkTarget(udid);
+    for (const path of paths) assertNoShellMetachars("path", path);
+    await this.run(["addmedia", udid, ...paths]);
+  }
+
+  /**
    * Launch, optionally replacing a running copy.
    *
    * Environment variables do not go on the command line: simctl reads them from

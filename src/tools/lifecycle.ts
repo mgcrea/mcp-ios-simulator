@@ -16,15 +16,24 @@ export const registerListTool = (server: McpServer, client: SimulatorClient): vo
     {
       title: "iOS Simulator: List",
       description:
-        "List the simulators on this machine, with the UDID every other tool takes. Returns all " +
-        "of them by default — booted and shut down, available and not — because \"why can't I use " +
-        'that one" has to be answerable from this list: a simulator whose runtime is missing shows ' +
-        "`available: false` with the reason.",
+        "List the simulators on this machine, with the UDID every other tool takes. Shows the " +
+        "usable ones: a typical machine carries thirty-odd simulators and a good fraction of them " +
+        "are orphans whose runtime is no longer installed, which cannot be booted, driven or " +
+        "screenshotted at all. The result still says how many were left out and how to delete " +
+        "them, and `include_unavailable` brings them back with `available: false` and the reason, " +
+        'so "why can\'t I use that one" is still answerable here.',
       inputSchema: z.object({
         booted_only: z
           .boolean()
           .default(false)
           .describe("Only simulators that are currently running."),
+        include_unavailable: z
+          .boolean()
+          .default(false)
+          .describe(
+            "Also list simulators whose runtime is not installed. Off by default because they " +
+              "are not usable for anything; turn it on to see why a specific one is missing.",
+          ),
         name_contains: z
           .string()
           .optional()
@@ -32,12 +41,13 @@ export const registerListTool = (server: McpServer, client: SimulatorClient): vo
       }),
       annotations: { readOnlyHint: true },
     },
-    async ({ booted_only, name_contains }) =>
+    async ({ booted_only, include_unavailable, name_contains }) =>
       wrap(async () => {
         const all = await client.listSimulators({ fresh: true });
         const needle = name_contains?.toLowerCase();
         const matched = all.filter(
           (sim) =>
+            (include_unavailable || sim.available) &&
             (!booted_only || sim.state === "Booted") &&
             (needle === undefined || sim.name.toLowerCase().includes(needle)),
         );
@@ -50,8 +60,10 @@ export const registerListTool = (server: McpServer, client: SimulatorClient): vo
             ? {
                 unavailable,
                 note:
-                  `${unavailable} simulators have no installed runtime and cannot be used. ` +
-                  "`xcrun simctl delete unavailable` clears them.",
+                  `${unavailable} simulators have no installed runtime and cannot be used` +
+                  (include_unavailable ? "" : ", and are not listed above") +
+                  ". `xcrun simctl delete unavailable` clears them, or pass " +
+                  "`include_unavailable: true` to see them here.",
               }
             : {}),
         };

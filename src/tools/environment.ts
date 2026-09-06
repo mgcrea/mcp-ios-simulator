@@ -207,6 +207,48 @@ export const registerEnvironmentTools = (server: McpServer, client: SimulatorCli
   );
 
   server.registerTool(
+    "ios_simulator_add_media",
+    {
+      title: "iOS Simulator: Add Media",
+      description:
+        "Put photos or videos into the simulator's photo library. A simulator has no camera, and " +
+        "this is how you get around that: seed the library first, then drive the app's picker as " +
+        "normal. Without it, every flow that starts with an image is untestable here. Files are " +
+        "copied in, so the originals are untouched and the simulator keeps them until it is " +
+        "erased. Pair it with `permission` on ios_simulator_set_environment to skip the access " +
+        "prompt entirely.",
+      inputSchema: z.object({
+        device: deviceArg,
+        paths: z
+          .array(z.string())
+          .min(1)
+          .describe(
+            "Absolute paths to the images or videos, e.g. " +
+              '["/Users/me/fixtures/monstera.jpg"]. Formats are the ones Photos itself accepts — ' +
+              "JPEG, PNG, HEIC, MOV, MP4.",
+          ),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    },
+    async ({ device, paths }) =>
+      wrap(async () => {
+        // Checked here rather than left to simctl, which answers a relative path
+        // with a bare "No such file or directory" that reads like a typo in the
+        // filename rather than a statement about the working directory.
+        for (const path of paths) {
+          if (!path.startsWith("/")) {
+            throw new IosError(`Every path must be absolute, got "${path}".`, {
+              remedy: "Pass the full path to each file.",
+            });
+          }
+        }
+        const target = client.requireBooted(await client.resolveTarget(device));
+        await client.simctl.addMedia(target.id, paths);
+        return { added: paths, udid: target.id };
+      }),
+  );
+
+  server.registerTool(
     "ios_simulator_push",
     {
       title: "iOS Simulator: Push",

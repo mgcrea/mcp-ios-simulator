@@ -52,6 +52,13 @@ export const registerTools = (
     // pressing, and offering one that does nothing is worse than offering none.
     buttons: ["home"] as [string, ...string[]],
     emptyScreenshotRemedy: EMPTY_SCREENSHOT_REMEDY,
+    // An alert is usually a permission prompt, and a simulator is the one place
+    // a permission prompt never had to appear. The moment one is on screen is
+    // the moment that is worth saying so.
+    alertHint:
+      "If this is a permission prompt, it can be answered before it ever appears: " +
+      'ios_simulator_set_environment {"permission":{"action":"grant","service":"photos",' +
+      '"bundle_id":"…"}}. `reset` puts the prompt back for testing the other branch.',
     // Geometry here is a local plist read reported on every screenshot, not a
     // slow round trip worth its own tool as it is on a device.
     includeDisplayInfo: false,

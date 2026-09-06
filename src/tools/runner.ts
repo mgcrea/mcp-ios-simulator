@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
-import { IosError, START_RUNNER_REMEDY } from "#/client/errors";
+import { IosError, START_RUNNER_SCRIPT_REMEDY } from "#/client/errors";
 import type { SimulatorClient } from "#/client/simulator";
 import { deviceArg, wrap } from "#/tools/util";
 
@@ -91,7 +91,7 @@ export const registerRunnerTools = (
         });
         if (pid === undefined) {
           throw new IosError("Could not start the runner — the process had no pid.", {
-            remedy: START_RUNNER_REMEDY,
+            remedy: START_RUNNER_SCRIPT_REMEDY,
           });
         }
         return {

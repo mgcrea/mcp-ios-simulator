@@ -12,27 +12,35 @@ import {
   RuntimeUnavailableError,
   SimulatorNotBootedError,
   SimulatorNotFoundError,
-  START_RUNNER_REMEDY,
+  startRunnerRemedy,
   TIMEOUT_REMEDY,
   TOOLCHAIN_REMEDY,
-  WDA_UNAVAILABLE_REMEDY,
+  wdaUnavailableRemedy,
 } from "#/client/errors";
 import { summarizeDevices, type SimulatorSummary } from "#/client/shape";
 import { Simctl } from "#/client/simctl";
 
-/** What to say when WebDriverAgent fails, on a simulator. */
-const SIMULATOR_WDA_REMEDIES = {
-  unavailable: WDA_UNAVAILABLE_REMEDY,
+/**
+ * What to say when WebDriverAgent fails, on a simulator.
+ *
+ * A function of the write gate rather than a constant: three of these four
+ * remedies name ios_simulator_restart_wda, and that tool is not registered when
+ * writes are off. Sending a caller to a tool it cannot see is the same failure
+ * as sending it to a shell it did not need.
+ */
+const simulatorWdaRemedies = (allowWrites: boolean) => ({
+  unavailable: wdaUnavailableRemedy(allowWrites),
   notAuthorized:
     "WebDriverAgent is running but is refusing to drive the UI. On a simulator there is no " +
-    `Enable UI Automation toggle to blame, so this is nearly always a stale runner. ${START_RUNNER_REMEDY}`,
+    "Enable UI Automation toggle to blame, so this is nearly always a stale runner. " +
+    startRunnerRemedy(allowWrites),
   noForegroundApp:
     "WebDriverAgent can see no foreground application on a session it has just created. Launch " +
-    "the app with ios_simulator_launch, or restart the runner with ios_simulator_restart_wda.",
+    `the app with ios_simulator_launch, or restart the runner. ${startRunnerRemedy(allowWrites)}`,
   noSuchElement:
     "Call ios_simulator_ui_tree to see what is actually on screen — the element may not have " +
     "appeared yet.",
-};
+});
 
 export type SimulatorClientOptions = {
   xcrunPath: string;
@@ -43,6 +51,8 @@ export type SimulatorClientOptions = {
   wdaTimeoutMs: number;
   wdaPort: number;
   wdaUrl?: string | undefined;
+  /** Only so the WebDriverAgent remedies can name a tool this server registers. */
+  allowWrites?: boolean | undefined;
   defaultSimulatorId?: string | undefined;
   exec?: ExecImpl | undefined;
   fetch?: typeof fetch | undefined;
@@ -243,7 +253,7 @@ export class SimulatorClient implements ScreenHost<SimulatorSummary> {
     const client = new WdaClient({
       baseUrl: async () => url,
       timeoutMs: this.opts.wdaTimeoutMs,
-      remedies: SIMULATOR_WDA_REMEDIES,
+      remedies: simulatorWdaRemedies(this.opts.allowWrites !== false),
       ...(this.opts.fetch ? { fetch: this.opts.fetch } : {}),
       ...(this.opts.logger ? { logger: this.opts.logger } : {}),
     });

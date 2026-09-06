@@ -2,7 +2,7 @@ import type { DisplayInfo } from "@mgcrea/mcp-ios-core";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
-import { START_RUNNER_REMEDY } from "#/client/errors";
+import { startRunnerRemedy } from "#/client/errors";
 import { toListRow, type SimulatorSummary } from "#/client/shape";
 import type { SimulatorClient } from "#/client/simulator";
 import type { ToolContext } from "#/tools/index";
@@ -118,6 +118,7 @@ export const diagnose = async (
       'Boot one with ios_simulator_power {"state":"booted"} — this server never boots implicitly.',
     );
   }
+  const nothingBooted = simulators.length > 0 && booted.length === 0;
 
   let target: SimulatorSummary | undefined;
   try {
@@ -152,8 +153,14 @@ export const diagnose = async (
   } catch (err) {
     wda.error = err instanceof Error ? err.message : String(err);
     problems.push("WebDriverAgent is not answering, so the UI tree and the input tools will fail.");
+    // Ordered, not merely listed. The runner tool calls `requireBooted`, so on a
+    // machine with nothing booted the two steps above and below are one
+    // sequence and running them the other way round cannot work — which the
+    // previous pair of independent bullets did not say anywhere.
     nextSteps.push(
-      `${START_RUNNER_REMEDY} Everything else — including screenshots — works without it.`,
+      (nothingBooted ? "Then, once it is booted: " : "") +
+        startRunnerRemedy(ctx.allowWrites) +
+        " Everything else — including screenshots — works without it.",
     );
   }
 

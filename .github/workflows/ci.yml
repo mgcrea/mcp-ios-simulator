@@ -128,11 +128,11 @@ jobs:
           # The exact counts. On a server whose default is the *permissive*
           # state, a tool quietly joining it is the regression worth failing on,
           # and no grep above would notice.
-          [ "$(wc -l < /tmp/a.txt)" -eq 5 ] \
-            || { echo "expected exactly 5 read tools, got $(wc -l < /tmp/a.txt)"; exit 1; }
-          [ "$(wc -l < /tmp/b.txt)" -eq 19 ] \
-            || { echo "expected exactly 19 tools with writes on, got $(wc -l < /tmp/b.txt)"; exit 1; }
-          echo "smoke test ok: 5 read tools, 14 added by the write gate"
+          [ "$(wc -l < /tmp/a.txt)" -eq 6 ] \
+            || { echo "expected exactly 6 read tools, got $(wc -l < /tmp/a.txt)"; exit 1; }
+          [ "$(wc -l < /tmp/b.txt)" -eq 21 ] \
+            || { echo "expected exactly 21 tools with writes on, got $(wc -l < /tmp/b.txt)"; exit 1; }
+          echo "smoke test ok: 6 read tools, 15 added by the write gate"
 
   publish-npm:
     name: Publish to npm

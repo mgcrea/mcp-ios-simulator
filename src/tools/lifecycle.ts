@@ -90,7 +90,8 @@ export const registerLifecycleTools = (server: McpServer, client: SimulatorClien
           .boolean()
           .default(true)
           .describe(
-            "Bring up the Simulator app so the screen is visible. A `boot` on its own is headless, " +
+            "Bring up a window on the device — Simulator.app, or DeviceHub on Xcode 27 — so the " +
+              "screen is visible. A `boot` on its own is headless, " +
               "which is fine for an agent and confusing for a person watching.",
           ),
         wait_ms: z
@@ -116,7 +117,17 @@ export const registerLifecycleTools = (server: McpServer, client: SimulatorClien
 
         const already = target.state === "Booted";
         if (!already) await client.simctl.boot(target.id);
-        if (open_window) await client.simctl.openApp(client.openPath);
+        // A window that will not open is a warning, not a failed boot: the boot
+        // has already been accepted, and reporting an error over a simulator
+        // that is coming up sends the caller to retry something that worked.
+        let windowWarning: string | undefined;
+        if (open_window) {
+          await client.simctl.openApp(client.openPath, target.id).catch((err: unknown) => {
+            windowWarning = `Booted, but no window could be opened: ${
+              err instanceof Error ? err.message : String(err)
+            }`;
+          });
+        }
 
         // Poll rather than trust the exit code: `simctl boot` returns as soon as
         // CoreSimulator has accepted the request, well before the device is
@@ -137,7 +148,9 @@ export const registerLifecycleTools = (server: McpServer, client: SimulatorClien
           state: observed,
           ...(already ? { alreadyThere: true } : {}),
           ...(observed === "Booted"
-            ? {}
+            ? windowWarning
+              ? { warning: windowWarning }
+              : {}
             : { warning: `Still ${observed} after ${wait_ms}ms. Raise wait_ms, or check Xcode.` }),
         };
       }),

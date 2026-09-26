@@ -261,9 +261,22 @@ export class Simctl {
     await this.run(["erase", udid]);
   }
 
-  /** Attach the Simulator UI to whatever is booted. A `boot` alone is headless. */
-  async openApp(openPath: string): Promise<void> {
-    await this.exec(openPath, ["-a", "Simulator"], this.opts.timeoutMs);
+  /**
+   * Put a window on a booted simulator. A `boot` alone is headless.
+   *
+   * Xcode 27 ships no Simulator.app — the window belongs to DeviceHub, which
+   * answers `devices://device/<UDID>` — while Xcode 26 and earlier only have
+   * Simulator.app. Try the old app first, since on a Mac with both the one the
+   * user already has open is the one they expect; fall back to DeviceHub.
+   */
+  async openApp(openPath: string, udid: string): Promise<"Simulator" | "DeviceHub"> {
+    try {
+      await this.exec(openPath, ["-a", "Simulator"], this.opts.timeoutMs);
+      return "Simulator";
+    } catch {
+      await this.exec(openPath, [`devices://device/${udid}`], this.opts.timeoutMs);
+      return "DeviceHub";
+    }
   }
 
   // ------------------------------------------------------------------ apps --

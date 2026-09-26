@@ -179,7 +179,8 @@ tools exist to avoid.
 
 ## Traps worth knowing
 
-All measured on Xcode 26.6 (17F113).
+Measured on Xcode 26.6 (17F113) unless marked Xcode 27, which was checked on
+Xcode 27.0 (27A266a) with an iOS 27.0 runtime.
 
 - **`simctl io … screenshot -` does not write to stdout.** The help text says it
   does. It creates a file literally named `-` in the current working directory
@@ -221,7 +222,17 @@ All measured on Xcode 26.6 (17F113).
   an `.ipa` or a device build fails with "No such file or directory", which reads
   like a path typo.
 - **`simctl boot` gives you no window.** It runs headless, which is what an agent
-  wants and confusing the first time; `power` opens Simulator.app by default.
+  wants and confusing the first time; `power` opens a window by default.
+- **Xcode 27 ships no Simulator.app.** The simulator's window belongs to
+  DeviceHub (`com.apple.dt.Devices`), and `open -a Simulator` fails. `power`
+  tries Simulator.app first and falls back to `devices://device/<UDID>`; a
+  window that still will not open is a `warning` on a boot that worked, never
+  an error.
+- **Xcode 27 moved the screen geometry out of `profile.plist`.** No device
+  type's profile carries `mainScreen*` any more, old types included; the same
+  numbers are under `capabilities.ScreenDimensionsCapability` in
+  `capabilities.plist`. Reading only the profile defaults the scale to 1 and
+  labels a 1206×2622 pixel capture as points, with nothing looking wrong.
 - **Two runtimes can share one identifier**, so the key of `list devices` is not
   a primary key.
 

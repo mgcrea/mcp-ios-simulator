@@ -1,7 +1,7 @@
 import type { ExecImpl } from "@mgcrea/mcp-ios-core";
 import { describe, expect, it } from "vitest";
 
-import { pngDimensions, toDisplayInfo } from "#/client/display";
+import { pngDimensions, readScreenProfile, toDisplayInfo } from "#/client/display";
 import { parseSimctlError } from "#/client/simctl";
 import { loadConfig } from "#/config";
 import {
@@ -207,6 +207,60 @@ describe("geometry", () => {
     expect(display.orientation).toBe("unknown");
   });
 
+  it("falls back to capabilities.plist, where Xcode 27 moved the geometry", async () => {
+    // Xcode 27's profile.plist has no mainScreen* key for any device type, and
+    // trusting the silence would default the scale to 1 and label pixels as points.
+    const reads: string[] = [];
+    const exec: ExecImpl = async (_path, args) => {
+      const file = args.at(-1) as string;
+      reads.push(file);
+      if (file.endsWith("profile.plist"))
+        return { stdout: '{"modelIdentifier":"iPhone19,2"}', stderr: "" };
+      return {
+        stdout: JSON.stringify({
+          capabilities: {
+            ScreenDimensionsCapability: {
+              "main-screen-width": 1206,
+              "main-screen-height": 2622,
+              "main-screen-scale": 3,
+            },
+          },
+        }),
+        stderr: "",
+      };
+    };
+    const profile = await readScreenProfile(
+      {
+        identifier: "x",
+        name: "iPhone 18 Pro",
+        bundlePath: "/DeviceTypes/iPhone 18 Pro.simdevicetype",
+      },
+      { plutilPath: "/usr/bin/plutil", exec, timeoutMs: 1000 },
+    );
+    expect(profile).toEqual({ mainScreenWidth: 1206, mainScreenHeight: 2622, mainScreenScale: 3 });
+    expect(reads.at(-1)).toMatch(/capabilities\.plist$/);
+  });
+
+  it("does not read capabilities.plist when the profile already has the scale", async () => {
+    const reads: string[] = [];
+    const exec: ExecImpl = async (_path, args) => {
+      reads.push(args.at(-1) as string);
+      return {
+        stdout: '{"mainScreenWidth":1206,"mainScreenHeight":2622,"mainScreenScale":3}',
+        stderr: "",
+      };
+    };
+    await readScreenProfile(
+      {
+        identifier: "x",
+        name: "iPhone 17 Pro",
+        bundlePath: "/DeviceTypes/iPhone 17 Pro.simdevicetype",
+      },
+      { plutilPath: "/usr/bin/plutil", exec, timeoutMs: 1000 },
+    );
+    expect(reads).toHaveLength(1);
+  });
+
   it("reads a PNG's dimensions out of its header", () => {
     expect(pngDimensions(Buffer.from(TINY_PNG, "base64"))).toEqual({ width: 1, height: 1 });
     expect(pngDimensions(Buffer.from("not a png"))).toBeUndefined();
@@ -394,6 +448,51 @@ describe("lifecycle", () => {
       .filter((verb) => verb === "shutdown" || verb === "erase" || verb === "boot");
     expect(order).toEqual(["shutdown", "erase", "boot"]);
     expect(result.rebooted).toBe(true);
+  });
+
+  it("opens DeviceHub when there is no Simulator.app, as on Xcode 27", async () => {
+    const log: ExecCall[] = [];
+    const result = await (
+      await connect(
+        {},
+        {
+          exec: execMock({
+            log,
+            failures: {
+              "-a Simulator": {
+                stderr: "Unable to find application named 'Simulator'",
+                exitCode: 1,
+              },
+            },
+          }),
+        },
+      )
+    ).call("ios_simulator_power", { device: BOOTED_UDID, state: "booted", wait_ms: 0 });
+    expect(result.isToolError).toBe(false);
+    expect(result.warning).toBeUndefined();
+    expect(log.some((call) => call.args.includes(`devices://device/${BOOTED_UDID}`))).toBe(true);
+  });
+
+  it("reports a window that will not open as a warning, not a failed boot", async () => {
+    const result = await (
+      await connect(
+        {},
+        {
+          exec: execMock({
+            failures: {
+              "-a Simulator": {
+                stderr: "Unable to find application named 'Simulator'",
+                exitCode: 1,
+              },
+              "devices://": { stderr: "no application handles devices://", exitCode: 1 },
+            },
+          }),
+        },
+      )
+    ).call("ios_simulator_power", { device: BOOTED_UDID, state: "booted", wait_ms: 0 });
+    expect(result.isToolError).toBe(false);
+    expect(result.state).toBe("Booted");
+    expect(String(result.warning)).toContain("no window could be opened");
   });
 
   it("does not boot a simulator implicitly, however unambiguous the target", async () => {

@@ -33,21 +33,57 @@ export type ScreenProfile = {
   mainScreenScale?: number;
 };
 
+/**
+ * Where Xcode 27 moved the screen geometry: its `profile.plist` no longer carries
+ * any `mainScreen*` key — for every device type, old ones included — and the
+ * same three numbers live under `capabilities.ScreenDimensionsCapability`.
+ */
+export const capabilitiesPlistPath = (bundlePath: string): string =>
+  join(bundlePath, "Contents", "Resources", "capabilities.plist");
+
+type CapabilitiesPlist = {
+  capabilities?: {
+    ScreenDimensionsCapability?: {
+      "main-screen-width"?: number;
+      "main-screen-height"?: number;
+      "main-screen-scale"?: number;
+    };
+  };
+};
+
+type PlistOpts = { plutilPath: string; exec: ExecImpl; timeoutMs: number };
+
+const readPlistJson = async <T>(path: string, opts: PlistOpts): Promise<T | undefined> => {
+  try {
+    const { stdout } = await opts.exec(
+      opts.plutilPath,
+      ["-convert", "json", "-o", "-", path],
+      opts.timeoutMs,
+    );
+    return JSON.parse(stdout) as T;
+  } catch {
+    return undefined;
+  }
+};
+
 export const readScreenProfile = async (
   deviceType: RawDeviceType,
-  opts: { plutilPath: string; exec: ExecImpl; timeoutMs: number },
+  opts: PlistOpts,
 ): Promise<ScreenProfile> => {
   if (!deviceType.bundlePath) return {};
-  const { stdout } = await opts.exec(
-    opts.plutilPath,
-    ["-convert", "json", "-o", "-", profilePlistPath(deviceType.bundlePath)],
-    opts.timeoutMs,
-  );
-  try {
-    return JSON.parse(stdout) as ScreenProfile;
-  } catch {
-    return {};
-  }
+  const profile =
+    (await readPlistJson<ScreenProfile>(profilePlistPath(deviceType.bundlePath), opts)) ?? {};
+  if (profile.mainScreenScale !== undefined) return profile;
+
+  const dims = (
+    await readPlistJson<CapabilitiesPlist>(capabilitiesPlistPath(deviceType.bundlePath), opts)
+  )?.capabilities?.ScreenDimensionsCapability;
+  if (!dims) return profile;
+  return {
+    mainScreenWidth: dims["main-screen-width"],
+    mainScreenHeight: dims["main-screen-height"],
+    mainScreenScale: dims["main-screen-scale"],
+  };
 };
 
 /**

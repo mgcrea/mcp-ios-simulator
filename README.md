@@ -228,6 +228,12 @@ Xcode 27.0 (27A266a) with an iOS 27.0 runtime.
   tries Simulator.app first and falls back to `devices://device/<UDID>`; a
   window that still will not open is a `warning` on a boot that worked, never
   an error.
+- **Quitting DeviceHub shuts every booted simulator down.** Unlike
+  Simulator.app, whose window could close with the device left running, a
+  plain Quit takes the simulators with it; DeviceHub's separate "Quit and Keep
+  Simulators Running" does not. Since `power` opens DeviceHub by default, a
+  device that vanishes mid-session usually means someone quit that window.
+  Pass `open_window: false` to boot headless when nobody needs to watch.
 - **Xcode 27 moved the screen geometry out of `profile.plist`.** No device
   type's profile carries `mainScreen*` any more, old types included; the same
   numbers are under `capabilities.ScreenDimensionsCapability` in

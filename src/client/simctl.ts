@@ -264,17 +264,24 @@ export class Simctl {
   /**
    * Put a window on a booted simulator. A `boot` alone is headless.
    *
-   * Xcode 27 ships no Simulator.app — the window belongs to DeviceHub, which
-   * answers `devices://device/<UDID>` — while Xcode 26 and earlier only have
-   * Simulator.app. Try the old app first, since on a Mac with both the one the
-   * user already has open is the one they expect; fall back to DeviceHub.
+   * Xcode 27 ships no Simulator.app — the window belongs to DeviceHub — while
+   * Xcode 26 and earlier only have Simulator.app. Try the old app first, since
+   * on a Mac with both the one the user already has open is the one they
+   * expect; fall back to DeviceHub.
+   *
+   * DeviceHub is opened by bundle id, never by URL. Measured on Xcode 27.0: no
+   * `devices://` form selects a device — `device/<UDID>`, a bare UDID and
+   * `simulator/<UDID>` all leave the window on whatever it showed — and a query
+   * form it did not recognise made DeviceHub quit, which shuts down every
+   * booted simulator on the Mac. So it cannot be told which device to show;
+   * the caller is told that instead.
    */
-  async openApp(openPath: string, udid: string): Promise<"Simulator" | "DeviceHub"> {
+  async openApp(openPath: string): Promise<"Simulator" | "DeviceHub"> {
     try {
       await this.exec(openPath, ["-a", "Simulator"], this.opts.timeoutMs);
       return "Simulator";
     } catch {
-      await this.exec(openPath, [`devices://device/${udid}`], this.opts.timeoutMs);
+      await this.exec(openPath, ["-b", "com.apple.dt.Devices"], this.opts.timeoutMs);
       return "DeviceHub";
     }
   }

@@ -121,12 +121,24 @@ export const registerLifecycleTools = (server: McpServer, client: SimulatorClien
         // has already been accepted, and reporting an error over a simulator
         // that is coming up sends the caller to retry something that worked.
         let windowWarning: string | undefined;
+        let windowNote: string | undefined;
         if (open_window) {
-          await client.simctl.openApp(client.openPath, target.id).catch((err: unknown) => {
-            windowWarning = `Booted, but no window could be opened: ${
-              err instanceof Error ? err.message : String(err)
-            }`;
-          });
+          await client.simctl
+            .openApp(client.openPath)
+            .then((app) => {
+              // DeviceHub shows one device per window and keeps showing the
+              // last one picked; nothing outside it can switch that.
+              if (app === "DeviceHub") {
+                windowNote =
+                  `Opened DeviceHub. It may still be showing another device: select ` +
+                  `${target.name} in its sidebar to watch this one.`;
+              }
+            })
+            .catch((err: unknown) => {
+              windowWarning = `Booted, but no window could be opened: ${
+                err instanceof Error ? err.message : String(err)
+              }`;
+            });
         }
 
         // Poll rather than trust the exit code: `simctl boot` returns as soon as
@@ -147,6 +159,7 @@ export const registerLifecycleTools = (server: McpServer, client: SimulatorClien
           name: target.name,
           state: observed,
           ...(already ? { alreadyThere: true } : {}),
+          ...(windowNote ? { note: windowNote } : {}),
           ...(observed === "Booted"
             ? windowWarning
               ? { warning: windowWarning }

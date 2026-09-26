@@ -470,7 +470,11 @@ describe("lifecycle", () => {
     ).call("ios_simulator_power", { device: BOOTED_UDID, state: "booted", wait_ms: 0 });
     expect(result.isToolError).toBe(false);
     expect(result.warning).toBeUndefined();
-    expect(log.some((call) => call.args.includes(`devices://device/${BOOTED_UDID}`))).toBe(true);
+    expect(log.some((call) => call.args.join(" ") === "-b com.apple.dt.Devices")).toBe(true);
+    // Never a URL: a devices:// form DeviceHub did not recognise made it quit,
+    // which shuts every booted simulator down.
+    expect(log.some((call) => call.args.some((arg) => arg.startsWith("devices://")))).toBe(false);
+    expect(String(result.note)).toContain("select");
   });
 
   it("reports a window that will not open as a warning, not a failed boot", async () => {
@@ -484,7 +488,7 @@ describe("lifecycle", () => {
                 stderr: "Unable to find application named 'Simulator'",
                 exitCode: 1,
               },
-              "devices://": { stderr: "no application handles devices://", exitCode: 1 },
+              "com.apple.dt.Devices": { stderr: "Unable to find application", exitCode: 1 },
             },
           }),
         },

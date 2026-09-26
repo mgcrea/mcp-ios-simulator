@@ -225,9 +225,16 @@ Xcode 27.0 (27A266a) with an iOS 27.0 runtime.
   wants and confusing the first time; `power` opens a window by default.
 - **Xcode 27 ships no Simulator.app.** The simulator's window belongs to
   DeviceHub (`com.apple.dt.Devices`), and `open -a Simulator` fails. `power`
-  tries Simulator.app first and falls back to `devices://device/<UDID>`; a
+  tries Simulator.app first and falls back to opening DeviceHub by bundle id; a
   window that still will not open is a `warning` on a boot that worked, never
   an error.
+- **DeviceHub cannot be told which device to show.** It keeps one device per
+  window, on whatever was last picked in its sidebar. No `devices://` URL
+  switches it — `device/<UDID>`, a bare UDID and `simulator/<UDID>` were all
+  ignored — and a query-string form it did not recognise made it quit, taking
+  every booted simulator down with it. `power` therefore opens it by bundle id
+  and says in its `note` to select the device. Screenshots and the WDA lane do
+  not care which device the window shows.
 - **Quitting DeviceHub shuts every booted simulator down.** Unlike
   Simulator.app, whose window could close with the device left running, a
   plain Quit takes the simulators with it; DeviceHub's separate "Quit and Keep

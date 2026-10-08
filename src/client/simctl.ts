@@ -32,6 +32,8 @@ import { IosError, TIMEOUT_REMEDY, TOOLCHAIN_REMEDY } from "#/client/errors";
 export type SimctlOptions = {
   xcrunPath: string;
   plutilPath: string;
+  /** Only `launch` with environment variables goes through it; see there. */
+  envPath: string;
   timeoutMs: number;
   exec?: ExecImpl | undefined;
   logger?: Logger | undefined;
@@ -45,6 +47,8 @@ export type RawSim = {
   availabilityError?: string;
   deviceTypeIdentifier?: string;
   lastBootedAt?: string;
+  /** The simulator's own filesystem root on this Mac; see `locateRedirect`. */
+  dataPath?: string;
 };
 
 export type RawRuntime = {
@@ -126,6 +130,14 @@ const remedyFor = (stderr: string): string | undefined => {
     return (
       "Check the path exists and is a `.app` **bundle directory** built for the simulator — an " +
       "`.ipa` or a device build will not install, and reports exactly this."
+    );
+  }
+  if (text.includes("the request to open")) {
+    // What `launch` says for an app that is not installed — measured right
+    // after an uninstall — and for one that would not start.
+    return (
+      "Check the app is installed with ios_simulator_list_apps: a bundle id that is not there " +
+      "fails exactly like this, with nothing in the message saying so."
     );
   }
   if (text.includes("failed to initialize io ports")) {
@@ -317,14 +329,30 @@ export class Simctl {
    * Launch, optionally replacing a running copy.
    *
    * Environment variables do not go on the command line: simctl reads them from
-   * its **own** environment under a `SIMCTL_CHILD_` prefix. `ExecImpl` pins a
-   * minimal environment on purpose, so a caller wanting them has to say so, and
-   * this is where that would be threaded through.
+   * its **own** environment under a `SIMCTL_CHILD_` prefix. `ExecImpl` takes
+   * argv and pins a minimal environment on purpose, so the variables reach
+   * simctl through `/usr/bin/env` as `SIMCTL_CHILD_NAME=value` argv entries in
+   * front of xcrun — still no shell, and still one argv entry per value. Names
+   * are checked here because `env` reads everything up to the first entry with
+   * no `=` as an assignment, so a name holding one would shift the command.
+   *
+   * `stdout` and `stderr` may be the same path, and that is how a log capture
+   * uses them: measured on Xcode 27.0 with an iOS 27.0 runtime, a probe app
+   * writing to `print`, to stderr and to `Logger` in turn left one file with all
+   * three interleaved in order, nothing overwritten. The redirect *appends* — a
+   * second launch into the same file kept the first one's lines — and where it
+   * lands is not always the path given; see `SimulatorClient.locateRedirect`.
    */
   async launch(
     udid: string,
     bundleId: string,
-    opts: { args?: string[]; terminateExisting?: boolean; stdout?: string; stderr?: string } = {},
+    opts: {
+      args?: string[];
+      terminateExisting?: boolean;
+      stdout?: string;
+      stderr?: string;
+      env?: Record<string, string>;
+    } = {},
   ): Promise<string> {
     assertNotBulkTarget(udid);
     const flags = [
@@ -332,7 +360,41 @@ export class Simctl {
       ...(opts.stdout ? [`--stdout=${opts.stdout}`] : []),
       ...(opts.stderr ? [`--stderr=${opts.stderr}`] : []),
     ];
-    return this.run(["launch", ...flags, udid, bundleId, ...(opts.args ?? [])]);
+    const argv = ["simctl", "launch", ...flags, udid, bundleId, ...(opts.args ?? [])];
+    const env = Object.entries(opts.env ?? {});
+    if (env.length === 0) return this.run(argv.slice(1));
+
+    for (const [name] of env) {
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+        throw new IosError(`Refusing environment variable name "${name}".`, {
+          remedy: "Use letters, digits and underscores only, e.g. OS_ACTIVITY_DT_MODE.",
+        });
+      }
+    }
+    this.opts.logger?.debug?.(
+      "simctl",
+      ...argv.slice(1),
+      `(env: ${env.map(([k]) => k).join(" ")})`,
+    );
+    const { stdout } = await this.exec(
+      this.opts.envPath,
+      [
+        ...env.map(([name, value]) => `SIMCTL_CHILD_${name}=${value}`),
+        this.opts.xcrunPath,
+        ...argv,
+      ],
+      this.opts.timeoutMs,
+    );
+    return stdout;
+  }
+
+  /**
+   * Remove an app and its data container. Irreversible, which is why the tool
+   * in front of this takes `confirm`.
+   */
+  async uninstall(udid: string, bundleId: string): Promise<void> {
+    assertNotBulkTarget(udid);
+    await this.run(["uninstall", udid, bundleId]);
   }
 
   async terminate(udid: string, bundleId: string): Promise<void> {

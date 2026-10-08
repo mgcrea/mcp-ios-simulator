@@ -1,3 +1,6 @@
+import { appendFile, mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+
 import type { ExecImpl } from "@mgcrea/mcp-ios-core";
 import { describe, expect, it } from "vitest";
 
@@ -10,6 +13,7 @@ import {
   connect,
   DEVICES_JSON,
   execMock,
+  scratchDir,
   spawnMock,
   TINY_PNG,
   type ExecCall,
@@ -27,12 +31,44 @@ const exploding: ExecImpl = () => {
 
 const READ_TOOLS = [
   "ios_simulator_diagnostics",
+  // Files this Mac already wrote; reading one changes nothing on a simulator.
+  "ios_simulator_get_crash_log",
   "ios_simulator_list",
   "ios_simulator_list_apps",
+  "ios_simulator_list_crash_logs",
   "ios_simulator_screenshot",
   "ios_simulator_ui_tree",
   // Observing, so it survives the write gate: waiting for a screen to finish
   // loading is something a read-only session needs at least as much.
+  "ios_simulator_wait_for_element",
+];
+
+const ALL_TOOLS = [
+  "ios_simulator_add_media",
+  "ios_simulator_diagnostics",
+  "ios_simulator_erase",
+  "ios_simulator_get_crash_log",
+  "ios_simulator_install",
+  "ios_simulator_launch",
+  "ios_simulator_list",
+  "ios_simulator_list_apps",
+  "ios_simulator_list_crash_logs",
+  "ios_simulator_open_url",
+  "ios_simulator_power",
+  "ios_simulator_press_button",
+  "ios_simulator_push",
+  // Read-only, but it reads only what launch started, so it goes where launch goes.
+  "ios_simulator_read_logs",
+  "ios_simulator_restart_wda",
+  "ios_simulator_screenshot",
+  "ios_simulator_set_environment",
+  "ios_simulator_swipe",
+  "ios_simulator_tap",
+  "ios_simulator_tap_element",
+  "ios_simulator_terminate",
+  "ios_simulator_type",
+  "ios_simulator_ui_tree",
+  "ios_simulator_uninstall",
   "ios_simulator_wait_for_element",
 ];
 
@@ -41,10 +77,7 @@ describe("the write gate", () => {
   // inverted too: the permissive state is the default, and the thing worth
   // failing CI over is a tool silently *joining* it.
   it("registers everything by default, because a simulator is disposable", async () => {
-    const names = await (await connect()).toolNames();
-    expect(names).toHaveLength(21);
-    expect(names).toContain("ios_simulator_tap");
-    expect(names).toContain("ios_simulator_erase");
+    expect(await (await connect()).toolNames()).toEqual(ALL_TOOLS);
   });
 
   it("turning writes off removes the driving tools rather than refusing them", async () => {
@@ -61,6 +94,23 @@ describe("the write gate", () => {
   it("registers the shared tools under this server's own namespace", async () => {
     for (const tool of await (await connect()).tools()) {
       expect(JSON.stringify(tool)).not.toContain("ios_device");
+    }
+  });
+});
+
+describe("every tool", () => {
+  // Three properties invisible in review and at runtime — the model just guesses.
+  it("has a service-prefixed title, annotations, and a description on every field", async () => {
+    for (const tool of await (await connect()).tools()) {
+      expect(tool.title, tool.name).toMatch(/^iOS Simulator: /);
+      expect(tool.annotations, tool.name).toBeDefined();
+      const properties = (tool.inputSchema.properties ?? {}) as Record<
+        string,
+        { description?: string }
+      >;
+      for (const [field, schema] of Object.entries(properties)) {
+        expect(schema.description, `${tool.name}.${field}`).toBeTruthy();
+      }
     }
   });
 });
@@ -312,6 +362,349 @@ describe("apps", () => {
     });
     const launch = log.find((call) => call.args.includes("launch"));
     expect(launch?.args).toContain("--terminate-running-process");
+  });
+});
+
+describe("log capture", () => {
+  const BOOTED_DATA =
+    "/Users/example/Library/Developer/CoreSimulator/Devices/C4AB4BE0-C0BC-436C-8C03-8F87330DFFA5/data";
+
+  it("sets OS_ACTIVITY_DT_MODE through simctl's SIMCTL_CHILD_ prefix, with no shell", async () => {
+    const log: ExecCall[] = [];
+    const harness = await connect({}, { exec: execMock({ log }) });
+    const result = await harness.call("ios_simulator_launch", {
+      bundle_id: "io.mgcrea.Canopy",
+      capture_logs: true,
+    });
+    expect(result.isToolError).toBe(false);
+    const launch = log.find((call) => call.args.includes("launch"));
+    // `env` puts the variable in simctl's own environment, which is the only
+    // place simctl reads a child's environment from.
+    expect(launch?.path).toBe("/usr/bin/env");
+    expect(launch?.args.slice(0, 4)).toEqual([
+      "SIMCTL_CHILD_OS_ACTIVITY_DT_MODE=YES",
+      "/usr/bin/xcrun",
+      "simctl",
+      "launch",
+    ]);
+    // One file for both streams, so one cursor follows print, stderr and Logger.
+    const out = launch?.args.find((arg) => arg.startsWith("--stdout="))?.slice(9);
+    const err = launch?.args.find((arg) => arg.startsWith("--stderr="))?.slice(9);
+    expect(out).toBe(err);
+    expect(result).toMatchObject({ pid: 4242, capturingLogs: true, log: out });
+  });
+
+  it("leaves a plain launch on xcrun with separate files, as before", async () => {
+    const log: ExecCall[] = [];
+    const result = await (
+      await connect({}, { exec: execMock({ log }) })
+    ).call("ios_simulator_launch", { bundle_id: "io.mgcrea.Canopy" });
+    const launch = log.find((call) => call.args.includes("launch"));
+    expect(launch?.path).toBe("/usr/bin/xcrun");
+    expect(launch?.args.join(" ")).not.toContain("SIMCTL_CHILD_");
+    expect(result.logs.stdout).toMatch(/io\.mgcrea\.Canopy\.out\.log$/);
+    expect(result.warning).toBeUndefined();
+  });
+
+  it("reports where the simulator really wrote a /tmp log: inside its own data root", async () => {
+    // Measured on an iOS 27.0 runtime: --stdout=/tmp/x landed at
+    // <dataPath>/tmp/x, and the path as given never existed.
+    const root = scratchDir();
+    const devices = DEVICES_JSON.replace(BOOTED_DATA, root);
+    const harness = await connect(
+      { IOS_SIMULATOR_OUTPUT_DIR: "/private/tmp/mcp-sim-remap" },
+      { exec: execMock({ simulatorRoot: root, overrides: { "list devices": devices } }) },
+    );
+    const result = await harness.call("ios_simulator_launch", {
+      bundle_id: "io.mgcrea.Canopy",
+      capture_logs: true,
+    });
+    expect(String(result.log).startsWith(`${root}/tmp/mcp-sim-remap/logs/`)).toBe(true);
+    expect(result.warning).toBeUndefined();
+  });
+
+  it("says so, rather than returning a path that does not exist, when the file is nowhere", async () => {
+    // Written under a root that is not the simulator's dataPath, so neither
+    // place the server looks has it.
+    const harness = await connect({}, { exec: execMock({ simulatorRoot: scratchDir() }) });
+    const result = await harness.call("ios_simulator_launch", {
+      bundle_id: "io.mgcrea.Canopy",
+      capture_logs: true,
+    });
+    expect(String(result.warning)).toContain("IOS_SIMULATOR_OUTPUT_DIR");
+  }, 10_000);
+
+  it("refuses to read with no capture, and names the flag that starts one", async () => {
+    const result = await (await connect()).call("ios_simulator_read_logs");
+    expect(result.isToolError).toBe(true);
+    expect(String(result.remedy)).toContain("capture_logs");
+  });
+
+  it("reads, follows with a cursor, and finishes the last line once the app exits", async () => {
+    let alive = true;
+    const harness = await connect({}, { processAlive: () => alive });
+    const launched = await harness.call("ios_simulator_launch", {
+      bundle_id: "io.mgcrea.Canopy",
+      capture_logs: true,
+    });
+    const path = String(launched.log);
+    await appendFile(
+      path,
+      "stdout line 1\n" +
+        "2026-10-08 23:27:10.165920+0200 Canopy[92138:106729888] [probe] oslog line 1\n" +
+        "half a li",
+    );
+
+    const first = await harness.call("ios_simulator_read_logs");
+    expect(first).toMatchObject({ capturing: true, pid: 4242, matched: 2, omitted: 0, path });
+    // The unified-log prefix is cut to the time, and the unfinished line waits.
+    expect(first.lines).toEqual(["stdout line 1", "23:27:10.165 [probe] oslog line 1"]);
+
+    await appendFile(path, "ne\nFatal error: boom\n");
+    const second = await harness.call("ios_simulator_read_logs", { cursor: first.next });
+    expect(second.lines).toEqual(["half a line", "Fatal error: boom"]);
+
+    await appendFile(path, "no newline at exit");
+    alive = false;
+    const last = await harness.call("ios_simulator_read_logs", {
+      bundle_id: "io.mgcrea.Canopy",
+      cursor: second.next,
+    });
+    expect(last).toMatchObject({ capturing: false, lines: ["no newline at exit"] });
+  });
+
+  it("filters before limiting, and counts what it left out", async () => {
+    const harness = await connect();
+    const launched = await harness.call("ios_simulator_launch", {
+      bundle_id: "io.mgcrea.Canopy",
+      capture_logs: true,
+    });
+    await writeFile(
+      String(launched.log),
+      Array.from({ length: 50 }, (_, i) => `${i % 5 === 0 ? "error" : "info"} ${i}`).join("\n") +
+        "\n",
+    );
+    const result = await harness.call("ios_simulator_read_logs", { filter: "^error", limit: 3 });
+    expect(result).toMatchObject({
+      matched: 10,
+      omitted: 7,
+      lines: ["error 35", "error 40", "error 45"],
+    });
+    const bad = await harness.call("ios_simulator_read_logs", { filter: "([" });
+    expect(bad.isToolError).toBe(true);
+  });
+
+  it("is not registered when writes are off, since nothing could start a capture", async () => {
+    const names = await (await connect({ IOS_SIMULATOR_ALLOW_WRITES: "0" })).toolNames();
+    expect(names).not.toContain("ios_simulator_read_logs");
+  });
+});
+
+/** A `.ips` in the shape this Mac's ReportCrash writes: a header line, then the report. */
+const ips = (opts: {
+  app: string;
+  platform: number;
+  udid?: string;
+  timestamp: string;
+  bugType?: string;
+  isSimulated?: boolean;
+}): string =>
+  JSON.stringify({
+    ...(opts.isSimulated ? { is_simulated: 1 } : {}),
+    app_name: opts.app,
+    timestamp: opts.timestamp,
+    app_version: "1.0",
+    build_version: "1",
+    platform: opts.platform,
+    bundleID: `io.example.${opts.app}`,
+    bug_type: opts.bugType ?? "309",
+    os_version: "macOS 27.0.1 (26A434)",
+    name: opts.app,
+    incident_id: "1570CBB6-C4EC-4F25-81A5-3AD897FBA2E8",
+  }) +
+  "\n" +
+  JSON.stringify(
+    {
+      procName: opts.app,
+      pid: 7298,
+      // Anonymised exactly like the real thing, which is why it is no use.
+      procPath: `/Users/USER/*/${opts.app}.app/${opts.app}`,
+      parentProc: opts.udid ? "launchd_sim" : "launchd",
+      coalitionName: opts.udid
+        ? `com.apple.CoreSimulator.SimDevice.${opts.udid}`
+        : `io.example.${opts.app}`,
+      exception: { type: "EXC_BREAKPOINT", signal: "SIGTRAP" },
+      termination: { namespace: "SIGNAL", code: 5, indicator: "Trace/BPT trap: 5" },
+      faultingThread: 0,
+      threads: [
+        {
+          queue: "com.apple.main-thread",
+          frames: [
+            {
+              imageIndex: 0,
+              symbol: "_assertionFailure(_:_:file:line:flags:)",
+              symbolLocation: 208,
+            },
+            { imageIndex: 1, symbol: "main", symbolLocation: 3144 },
+          ],
+        },
+      ],
+      usedImages: [{ name: "libswiftCore.dylib" }, { name: opts.app }],
+    },
+    null,
+    2,
+  );
+
+const OTHER_UDID = "18764510-38C0-4D96-B0BA-7F8A969EF2AD";
+
+const reportsDir = async (): Promise<string> => {
+  const dir = scratchDir();
+  await mkdir(join(dir, "Retired"));
+  const put = (name: string, text: string) => writeFile(join(dir, name), text);
+  await put(
+    "Canopy-2026-10-08-232826.ips",
+    ips({
+      app: "Canopy",
+      platform: 7,
+      udid: BOOTED_UDID,
+      timestamp: "2026-10-08 23:28:26.00 +0200",
+    }),
+  );
+  await put(
+    "intelligencetasksd-2026-10-08-150617.ips",
+    ips({
+      app: "intelligencetasksd",
+      platform: 7,
+      udid: OTHER_UDID,
+      timestamp: "2026-10-08 15:06:17.00 +0200",
+    }),
+  );
+  // A Mac app's crash with `is_simulated` set: measured, and not a simulator's.
+  await put(
+    "ExcUserFault_Safari-2026-10-08-221045.ips",
+    ips({
+      app: "Safari",
+      platform: 1,
+      isSimulated: true,
+      timestamp: "2026-10-08 22:10:45.00 +0200",
+    }),
+  );
+  await put(
+    "Drakar-2026-10-08-174624.ips",
+    ips({ app: "Drakar", platform: 1, timestamp: "2026-10-08 17:46:24.00 +0200" }),
+  );
+  await writeFile(
+    join(dir, "Retired", "Canopy-2026-10-02-213409.ips"),
+    ips({
+      app: "Canopy",
+      platform: 7,
+      udid: BOOTED_UDID,
+      timestamp: "2026-10-02 21:34:09.00 +0200",
+    }),
+  );
+  await put("something.diag", "not a crash report");
+  return dir;
+};
+
+describe("crash logs", () => {
+  it("lists only simulator reports, newest first, Retired/ included", async () => {
+    const dir = await reportsDir();
+    const harness = await connect({ IOS_SIMULATOR_CRASH_REPORTS_DIR: dir });
+    const result = await harness.call("ios_simulator_list_crash_logs");
+    expect(result.reports.map((r: { name: string }) => r.name)).toEqual([
+      "Canopy-2026-10-08-232826.ips",
+      "intelligencetasksd-2026-10-08-150617.ips",
+      "Retired/Canopy-2026-10-02-213409.ips",
+    ]);
+    expect(result.reports[0]).toMatchObject({
+      process: "Canopy",
+      kind: "crash",
+      udid: BOOTED_UDID,
+      simulator: "iPhone 17 Pro",
+    });
+  });
+
+  it("narrows to one simulator and one process", async () => {
+    const dir = await reportsDir();
+    const harness = await connect({ IOS_SIMULATOR_CRASH_REPORTS_DIR: dir });
+    const mine = await harness.call("ios_simulator_list_crash_logs", { device: BOOTED_UDID });
+    expect(mine.total).toBe(2);
+    expect(mine.udid).toBe(BOOTED_UDID);
+    const daemons = await harness.call("ios_simulator_list_crash_logs", {
+      process: "intelligence",
+    });
+    expect(daemons.total).toBe(1);
+    const none = await harness.call("ios_simulator_list_crash_logs", { kinds: ["jetsam"] });
+    expect(none.total).toBe(0);
+  });
+
+  it("is empty, not an error, when the reports directory does not exist", async () => {
+    const result = await (await connect()).call("ios_simulator_list_crash_logs");
+    expect(result).toMatchObject({ isToolError: false, total: 0 });
+  });
+
+  it("summarises one report with the frames' images resolved", async () => {
+    const dir = await reportsDir();
+    const harness = await connect({ IOS_SIMULATOR_CRASH_REPORTS_DIR: dir });
+    const result = await harness.call("ios_simulator_get_crash_log", {
+      name: "Retired/Canopy-2026-10-02-213409.ips",
+    });
+    expect(result.isToolError).toBe(false);
+    expect(result.path).toBe(join(dir, "Retired", "Canopy-2026-10-02-213409.ips"));
+    expect(result.udid).toBe(BOOTED_UDID);
+    expect(result.crash.faultingThread.frames[0]).toBe(
+      "0 libswiftCore.dylib _assertionFailure(_:_:file:line:flags:) + 208",
+    );
+    // No application-specific message, so it says where a fatalError's went.
+    expect(String(result.note)).toContain("capture_logs");
+  });
+
+  it("refuses names that leave the reports directory", async () => {
+    const dir = await reportsDir();
+    const harness = await connect({ IOS_SIMULATOR_CRASH_REPORTS_DIR: dir });
+    for (const name of ["../secret.ips", "Retired/../../x.ips", "/etc/x.ips", "notes.txt"]) {
+      const result = await harness.call("ios_simulator_get_crash_log", { name });
+      expect(result.isToolError, name).toBe(true);
+    }
+  });
+
+  it("will not read the Mac's own crash reports through a simulator tool", async () => {
+    const dir = await reportsDir();
+    const harness = await connect({ IOS_SIMULATOR_CRASH_REPORTS_DIR: dir });
+    const result = await harness.call("ios_simulator_get_crash_log", {
+      name: "Drakar-2026-10-08-174624.ips",
+    });
+    expect(result.isToolError).toBe(true);
+    expect(String(result.error)).toContain("not from a simulator");
+  });
+});
+
+describe("uninstall", () => {
+  it("will not run without an explicit confirm", async () => {
+    const log: ExecCall[] = [];
+    const harness = await connect({}, { exec: execMock({ log }) });
+    const result = await harness.call("ios_simulator_uninstall", { bundle_id: "io.mgcrea.Canopy" });
+    expect(result.isToolError).toBe(true);
+    expect(log.some((call) => call.args.includes("uninstall"))).toBe(false);
+  });
+
+  it("calls simctl uninstall with one concrete UDID", async () => {
+    const log: ExecCall[] = [];
+    const harness = await connect({}, { exec: execMock({ log }) });
+    const result = await harness.call("ios_simulator_uninstall", {
+      bundle_id: "io.mgcrea.Canopy",
+      confirm: true,
+    });
+    expect(result).toMatchObject({ isToolError: false, uninstalled: "io.mgcrea.Canopy" });
+    const call = log.find((c) => c.args.includes("uninstall"));
+    expect(call?.args).toEqual(["simctl", "uninstall", BOOTED_UDID, "io.mgcrea.Canopy"]);
+  });
+
+  it("is marked destructive, so a host asks before it runs", async () => {
+    const tool = (await (await connect()).tools()).find(
+      (t) => t.name === "ios_simulator_uninstall",
+    );
+    expect(tool?.annotations?.destructiveHint).toBe(true);
   });
 });
 

@@ -1,10 +1,41 @@
+import { join } from "node:path";
+
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import { IosError } from "#/client/errors";
-import { summarizeApps } from "#/client/shape";
+import { summarizeApps, type SimulatorSummary } from "#/client/shape";
 import type { SimulatorClient } from "#/client/simulator";
 import { bundleIdArg, deviceArg, wrap } from "#/tools/util";
+
+/** `io.mgcrea.Canopy: 12345` is the whole of what `simctl launch` prints. */
+const parsePid = (output: string): number | undefined => {
+  const pid = /:\s*(\d+)\s*$/.exec(output.trim())?.[1];
+  return pid ? Number(pid) : undefined;
+};
+
+const NOT_FOUND_WARNING =
+  "The log file is neither where it was asked for nor under the simulator's data directory. " +
+  "Set IOS_SIMULATOR_OUTPUT_DIR to a directory under your home folder, which the simulator " +
+  "writes to as-is.";
+
+/**
+ * Find the redirect, giving the simulator a moment to create it. `simctl
+ * launch` returns once the app is spawned, and the file is opened as part of
+ * that spawn, so the first look nearly always finds it; the retries only cover
+ * a slow spawn rather than a known race.
+ */
+const locate = async (
+  client: SimulatorClient,
+  target: SimulatorSummary,
+  path: string,
+): Promise<{ path: string; found: boolean }> => {
+  for (let attempt = 0; ; attempt += 1) {
+    const found = await client.locateRedirect(target, path);
+    if (found.found || attempt >= 4) return found;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+};
 
 export const registerListAppsTool = (server: McpServer, client: SimulatorClient): void => {
   server.registerTool(
@@ -81,7 +112,9 @@ export const registerAppTools = (
         "Launch an installed app. Pass `arguments` to put it into a fixture or demo mode — that " +
         "is what IOS_SIMULATOR_LAUNCH_ARGS sets as the default for every launch that does not " +
         "override it. Standard output and error are captured to files under the output directory, " +
-        "so an app that dies on launch leaves something readable behind.",
+        "so an app that dies on launch leaves something readable behind. Pass `capture_logs: " +
+        "true` to also get its Logger/os_log output, in one file read with " +
+        "ios_simulator_read_logs.",
       inputSchema: z.object({
         device: deviceArg,
         bundle_id: bundleIdArg,
@@ -99,31 +132,112 @@ export const registerAppTools = (
             "Replace a running copy rather than attaching to it. On by default so a launch means " +
               "a fresh process and a predictable first screen.",
           ),
+        capture_logs: z
+          .boolean()
+          .default(false)
+          .describe(
+            "Write stdout, stderr and every Logger/os_log message to one fresh file, for " +
+              "ios_simulator_read_logs. Sets OS_ACTIVITY_DT_MODE=YES in the app's environment, " +
+              "which is what Xcode sets to mirror unified logging onto stderr; without it an " +
+              "app's Logger output reaches no file at all.",
+          ),
       }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     },
-    async ({ device, bundle_id, arguments: args, terminate_first }) =>
+    async ({ device, bundle_id, arguments: args, terminate_first, capture_logs }) =>
       wrap(async () => {
         const target = client.requireBooted(await client.resolveTarget(device));
         const effective = args ?? launchArgs;
-        const stdout = `${outputDir}/${bundle_id}.out.log`;
-        const stderr = `${outputDir}/${bundle_id}.err.log`;
+        const said = {
+          ...(effective.length > 0 ? { arguments: effective } : {}),
+          ...(args === undefined && launchArgs.length > 0
+            ? { argumentsFrom: "IOS_SIMULATOR_LAUNCH_ARGS" }
+            : {}),
+        };
+
+        if (capture_logs) {
+          // One file for both streams, fresh per launch: the redirect appends,
+          // so reusing a path would hand the reader the previous run's lines
+          // first. Interleaving in one file is what lets one cursor follow
+          // print(), stderr and Logger in the order they happened.
+          const stamp = new Date().toISOString().replaceAll(":", "-");
+          const requested = join(outputDir, "logs", `${bundle_id}-${stamp}.log`);
+          const output = await client.simctl.launch(target.id, bundle_id, {
+            args: effective,
+            terminateExisting: terminate_first,
+            stdout: requested,
+            stderr: requested,
+            env: { OS_ACTIVITY_DT_MODE: "YES" },
+          });
+          const pid = parsePid(output);
+          const log = await locate(client, target, requested);
+          client.captures.record({
+            udid: target.id,
+            simulatorName: target.name,
+            bundleId: bundle_id,
+            path: log.path,
+            pid,
+            startedAt: new Date().toISOString(),
+          });
+          return {
+            launched: bundle_id,
+            ...(pid !== undefined ? { pid } : {}),
+            ...said,
+            capturingLogs: true,
+            log: log.path,
+            ...(log.found ? {} : { warning: NOT_FOUND_WARNING }),
+          };
+        }
+
+        const stdout = join(outputDir, `${bundle_id}.out.log`);
+        const stderr = join(outputDir, `${bundle_id}.err.log`);
         const output = await client.simctl.launch(target.id, bundle_id, {
           args: effective,
           terminateExisting: terminate_first,
           stdout,
           stderr,
         });
-        const pid = /:\s*(\d+)\s*$/.exec(output.trim())?.[1];
+        const pid = parsePid(output);
+        const [out, err] = await Promise.all([
+          locate(client, target, stdout),
+          locate(client, target, stderr),
+        ]);
         return {
           launched: bundle_id,
-          ...(pid ? { pid: Number(pid) } : {}),
-          ...(effective.length > 0 ? { arguments: effective } : {}),
-          ...(args === undefined && launchArgs.length > 0
-            ? { argumentsFrom: "IOS_SIMULATOR_LAUNCH_ARGS" }
-            : {}),
-          logs: { stdout, stderr },
+          ...(pid !== undefined ? { pid } : {}),
+          ...said,
+          // Appended to across launches, unlike a `capture_logs` file.
+          logs: { stdout: out.path, stderr: err.path },
+          ...(out.found && err.found ? {} : { warning: NOT_FOUND_WARNING }),
         };
+      }),
+  );
+
+  server.registerTool(
+    "ios_simulator_uninstall",
+    {
+      title: "iOS Simulator: Uninstall",
+      description:
+        "Remove an app from the simulator, **with its data container** — documents, databases " +
+        "and preferences all go, and nothing brings them back. To get back to a cold start while " +
+        "keeping the data, use ios_simulator_terminate. To test a genuine first launch of one " +
+        "app, this is narrower than ios_simulator_erase, which wipes every app on the simulator. " +
+        "Uninstalling an app that is not installed also succeeds, so success does not prove it " +
+        "was there.",
+      inputSchema: z.object({
+        device: deviceArg,
+        bundle_id: bundleIdArg,
+        confirm: z
+          .literal(true)
+          .describe("Must be true. Explicit acknowledgement that the app's data is deleted."),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+    },
+    async ({ device, bundle_id }) =>
+      wrap(async () => {
+        const target = client.requireBooted(await client.resolveTarget(device));
+        await client.simctl.uninstall(target.id, bundle_id);
+        return { uninstalled: bundle_id, udid: target.id };
       }),
   );
 

@@ -8,6 +8,7 @@ import { registerAppTools, registerListAppsTool } from "#/tools/apps";
 import { registerDiagnosticsTools } from "#/tools/diagnostics";
 import { registerEnvironmentTools } from "#/tools/environment";
 import { registerLifecycleTools, registerListTool } from "#/tools/lifecycle";
+import { registerCrashLogTools, registerLogReadTools } from "#/tools/logs";
 import { registerRunnerTools, type SpawnRunner } from "#/tools/runner";
 import { SIMULATOR_NAMING } from "#/tools/util";
 
@@ -30,6 +31,12 @@ export type ToolContext = {
  * server's posture, and then the driving tools are *absent* rather than
  * refused, because a refusal still lets a model try, retry and reason about a
  * way around it.
+ *
+ * Reading logs splits across the line. Crash reports are files this Mac
+ * already wrote, so listing and reading them is observing and survives the
+ * gate. `ios_simulator_read_logs` is read-only too, but it only ever reads what
+ * `ios_simulator_launch` started capturing, so it goes where launch goes — a
+ * tool that can only answer "no capture" is noise in the list.
  *
  * The observe half is unusually capable here: `screenshot` goes through simctl,
  * so seeing the screen needs no WebDriverAgent and no setup of any kind. Only
@@ -68,12 +75,14 @@ export const registerTools = (
   registerListTool(server, client);
   registerListAppsTool(server, client);
   registerScreenTools(server, shared);
+  registerCrashLogTools(server, client, ctx);
 
   if (!ctx.allowWrites) return;
 
   registerInputTools(server, shared);
   registerLifecycleTools(server, client);
   registerAppTools(server, client, ctx.config.launchArgs, ctx.config.outputDir);
+  registerLogReadTools(server, client);
   registerEnvironmentTools(server, client);
   registerRunnerTools(server, client, ctx.config.outputDir, spawnRunner);
 };

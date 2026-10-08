@@ -1,3 +1,5 @@
+import { join } from "node:path";
+
 import {
   createExec,
   WdaClient,
@@ -17,6 +19,7 @@ import {
   TOOLCHAIN_REMEDY,
   wdaUnavailableRemedy,
 } from "#/client/errors";
+import { exists, LaunchCaptures, type ProcessAlive } from "#/client/logs";
 import { summarizeDevices, type SimulatorSummary } from "#/client/shape";
 import { Simctl } from "#/client/simctl";
 
@@ -47,6 +50,8 @@ export type SimulatorClientOptions = {
   sipsPath: string;
   plutilPath: string;
   openPath: string;
+  /** How launch environment variables reach simctl; see `Simctl.launch`. */
+  envPath?: string | undefined;
   execTimeoutMs: number;
   wdaTimeoutMs: number;
   wdaPort: number;
@@ -56,6 +61,8 @@ export type SimulatorClientOptions = {
   defaultSimulatorId?: string | undefined;
   exec?: ExecImpl | undefined;
   fetch?: typeof fetch | undefined;
+  /** Override the launched app's liveness probe (tests). */
+  processAlive?: ProcessAlive | undefined;
   logger?: Logger | undefined;
 };
 
@@ -66,6 +73,7 @@ export class SimulatorClient implements ScreenHost<SimulatorSummary> {
   readonly plutilPath: string;
   readonly openPath: string;
   readonly execTimeoutMs: number;
+  readonly captures: LaunchCaptures;
   private readonly opts: SimulatorClientOptions;
   private readonly wdaClients = new Map<string, WdaClient>();
   /** `simctl list` is ~80ms and most tools want it twice; 2s collapses that. */
@@ -79,9 +87,11 @@ export class SimulatorClient implements ScreenHost<SimulatorSummary> {
     this.plutilPath = opts.plutilPath;
     this.openPath = opts.openPath;
     this.execTimeoutMs = opts.execTimeoutMs;
+    this.captures = new LaunchCaptures(opts.processAlive);
     this.simctl = new Simctl({
       xcrunPath: opts.xcrunPath,
       plutilPath: opts.plutilPath,
+      envPath: opts.envPath ?? "/usr/bin/env",
       timeoutMs: opts.execTimeoutMs,
       ...(opts.exec ? { exec: opts.exec } : {}),
       ...(opts.logger ? { logger: opts.logger } : {}),
@@ -219,6 +229,36 @@ export class SimulatorClient implements ScreenHost<SimulatorSummary> {
     }
     const capture = capturePng ? pngDimensions(Buffer.from(capturePng, "base64")) : undefined;
     return toDisplayInfo(profile, capture);
+  }
+
+  /**
+   * Where a `simctl launch --stdout/--stderr` file actually landed.
+   *
+   * Not necessarily where it was asked to. The redirect is opened by the
+   * simulator's own launchd, which sees the simulator's filesystem, and that
+   * has its own `/tmp` and `/var/folders`. Measured on an iOS 27.0 runtime:
+   * `--stdout=/tmp/x/a.out` created `<dataPath>/tmp/x/a.out`, and a path under
+   * `/var/folders/…/T` — which is where `os.tmpdir()`, and so this server's
+   * default output directory, points — landed under `<dataPath>/var/folders/…`,
+   * the `/private` prefix of either making no difference. A path under `/Users`
+   * was written exactly where it said, missing directories created.
+   *
+   * Rather than encode which prefixes are remapped, which is a property of a
+   * runtime and can change with the next one, this looks: the path as given
+   * first, then the same path under the simulator's data root. Neither existing
+   * means the redirect went somewhere unforeseen, and the path as given is
+   * returned with `found: false` so the caller can say so.
+   */
+  async locateRedirect(
+    target: SimulatorSummary,
+    path: string,
+  ): Promise<{ path: string; found: boolean }> {
+    if (await exists(path)) return { path, found: true };
+    if (target.dataPath) {
+      const inside = join(target.dataPath, path.replace(/^\/private(?=\/)/, ""));
+      if (await exists(inside)) return { path: inside, found: true };
+    }
+    return { path, found: false };
   }
 
   /** The capture lane that needs no runner — the whole reason this server is cheap to start. */

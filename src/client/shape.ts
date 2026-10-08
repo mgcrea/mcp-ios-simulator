@@ -31,6 +31,12 @@ export type SimulatorSummary = {
   available: boolean;
   unavailableReason?: string;
   lastBootedAt?: string;
+  /**
+   * The simulator's own filesystem root on this Mac. Never shown in a list row;
+   * it is how a launch log that the simulator wrote under its own `/tmp` is
+   * found again — see `SimulatorClient.locateRedirect`.
+   */
+  dataPath?: string;
 };
 
 /**
@@ -63,6 +69,7 @@ export const summarizeDevices = (
       available: sim.isAvailable !== false,
       ...(sim.availabilityError ? { unavailableReason: sim.availabilityError } : {}),
       ...(sim.lastBootedAt ? { lastBootedAt: sim.lastBootedAt } : {}),
+      ...(sim.dataPath ? { dataPath: sim.dataPath } : {}),
     })),
   );
 };

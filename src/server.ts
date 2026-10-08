@@ -2,6 +2,7 @@ import type { ExecImpl, Logger } from "@mgcrea/mcp-ios-core";
 import { McpServer } from "@modelcontextprotocol/server";
 
 import { BUILD_INFO } from "#/build-info";
+import type { ProcessAlive } from "#/client/logs";
 import { SimulatorClient } from "#/client/simulator";
 import type { Config } from "#/config";
 import { registerTools } from "#/tools/index";
@@ -18,6 +19,8 @@ export type CreateServerOptions = {
   fetch?: typeof fetch;
   /** Override starting the runner (tests): no process is spawned. */
   spawnRunner?: SpawnRunner;
+  /** Override the launched-app liveness probe (tests): no real pid is signalled. */
+  processAlive?: ProcessAlive;
   logger?: Logger;
 };
 
@@ -27,9 +30,10 @@ export type CreatedServer = {
 };
 
 /**
- * A pure factory. The injectable seams — `exec`, `fetch` and `spawnRunner` —
- * are the whole reason the test suite can drive real tools through the real SDK
- * with no simulator, no Xcode, no WebDriverAgent and no process left running.
+ * A pure factory. The injectable seams — `exec`, `fetch`, `spawnRunner` and
+ * `processAlive`, plus `crashReportsDir` in the config — are the whole reason
+ * the test suite can drive real tools through the real SDK with no simulator,
+ * no Xcode, no WebDriverAgent and no process left running.
  * Nothing below `config.ts` reads `process.env`.
  */
 export const createServer = (opts: CreateServerOptions): CreatedServer => {
@@ -49,6 +53,7 @@ export const createServer = (opts: CreateServerOptions): CreatedServer => {
     ...(config.simulatorId ? { defaultSimulatorId: config.simulatorId } : {}),
     ...(opts.exec ? { exec: opts.exec } : {}),
     ...(opts.fetch ? { fetch: opts.fetch } : {}),
+    ...(opts.processAlive ? { processAlive: opts.processAlive } : {}),
     ...(opts.logger ? { logger: opts.logger } : {}),
   });
 

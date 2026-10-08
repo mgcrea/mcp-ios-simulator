@@ -175,9 +175,9 @@ export const registerLifecycleTools = (server: McpServer, client: SimulatorClien
       title: "iOS Simulator: Erase",
       description:
         "Wipe a simulator back to a factory state: installed apps, their data, the keychain and " +
-        "every granted permission. The only irreversible tool here, and the reason it is the only " +
-        "one behind `confirm`. Use it to test a genuine first launch. A booted simulator is shut " +
-        "down first and booted again afterwards, because simctl refuses to erase a running one.",
+        "every granted permission. Irreversible, hence `confirm`; ios_simulator_uninstall is the " +
+        "narrower way to a first launch of one app. A booted simulator is shut down first and " +
+        "booted again afterwards, because simctl refuses to erase a running one.",
       inputSchema: z.object({
         device: deviceArg,
         confirm: confirmArg,

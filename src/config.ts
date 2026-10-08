@@ -37,14 +37,27 @@ const ConfigSchema = z
      * **On by default**, which is the one place this server deliberately breaks
      * the fleet convention. What makes the device server read-only is that a
      * phone belongs to a real person; a simulator is disposable and holds
-     * nobody's data. `ios_simulator_erase` still requires an explicit `confirm`
-     * because it is the only irreversible tool here.
+     * nobody's data. `ios_simulator_erase` and `ios_simulator_uninstall` still
+     * require an explicit `confirm`, because they are the irreversible ones.
      */
     allowWrites: z.boolean().default(true),
     /** Applied by `launch` when the call passes no `arguments` of its own. */
     launchArgs: z.array(z.string()).default([]),
-    /** Saved screenshots, launch logs and the runner log. */
+    /**
+     * Saved screenshots, launch logs and the runner log. A launch log is opened
+     * by the simulator rather than by this server, and a simulator has its own
+     * `/tmp` and `/var/folders` — under this default it lands in the
+     * simulator's data directory, and `launch` reports where it really is.
+     */
     outputDir: z.string().min(1).default(join(tmpdir(), "mcp-ios-simulator")),
+    /**
+     * Where this Mac's ReportCrash writes `.ips` files, simulator apps' included.
+     * Configurable for tests and for a report folder copied off another Mac.
+     */
+    crashReportsDir: z
+      .string()
+      .min(1)
+      .default(join(homedir(), "Library", "Logs", "DiagnosticReports")),
     maxTreeBytes: z.number().int().min(1000).max(500_000).default(24_000),
     xcrunPath: z.string().min(1).default("/usr/bin/xcrun"),
     sipsPath: z.string().min(1).default("/usr/bin/sips"),
@@ -133,6 +146,7 @@ export const loadConfig = (
     allowWrites: pick(parseBool(env.IOS_SIMULATOR_ALLOW_WRITES), "allowWrites"),
     launchArgs: pick(parseArgs(env.IOS_SIMULATOR_LAUNCH_ARGS), "launchArgs"),
     outputDir: pick(trimmed(env.IOS_SIMULATOR_OUTPUT_DIR), "outputDir"),
+    crashReportsDir: pick(trimmed(env.IOS_SIMULATOR_CRASH_REPORTS_DIR), "crashReportsDir"),
     maxTreeBytes: pick(parseIntOpt(env.IOS_SIMULATOR_MAX_TREE_BYTES), "maxTreeBytes"),
     xcrunPath: pick(trimmed(env.IOS_SIMULATOR_XCRUN_PATH), "xcrunPath"),
     sipsPath: pick(trimmed(env.IOS_SIMULATOR_SIPS_PATH), "sipsPath"),

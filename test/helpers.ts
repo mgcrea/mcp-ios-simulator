@@ -1,5 +1,6 @@
-import { readFileSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { appendFile, mkdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -12,6 +13,7 @@ import {
 } from "@mgcrea/mcp-ios-core";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 
+import type { ProcessAlive } from "#/client/logs";
 import { loadConfig, type Config } from "#/config";
 import { createServer } from "#/server";
 import type { SpawnRunner } from "#/tools/runner";
@@ -26,6 +28,15 @@ export type { FetchLike };
  * worse, the reverse.
  */
 export const ABSENT_CONFIG = "/nonexistent/ios-simulator-mcp.json";
+
+/**
+ * The same for crash reports: without it the suite would read whatever this
+ * Mac's own ~/Library/Logs/DiagnosticReports holds that day.
+ */
+export const ABSENT_REPORTS = "/nonexistent/DiagnosticReports";
+
+/** A scratch directory per call, so no test reads another's launch logs. */
+export const scratchDir = (): string => mkdtempSync(join(tmpdir(), "mcp-ios-simulator-test-"));
 
 export const BOOTED_UDID = "C4AB4BE0-C0BC-436C-8C03-8F87330DFFA5";
 
@@ -96,6 +107,14 @@ export type ExecMockOptions = {
   /** Make one subcommand fail, keyed the same way. */
   failures?: Record<string, { stderr: string; exitCode: number }>;
   log?: ExecCall[];
+  /**
+   * Where the simulator's own filesystem is. Set, `launch` redirects land under
+   * it, as they do for a `/tmp` or `/var/folders` path on a real runtime;
+   * unset, they land at the path given, as for one under `/Users`.
+   */
+  simulatorRoot?: string;
+  /** What the launched app has written by the time `launch` returns. */
+  launchOutput?: string;
 };
 
 /**
@@ -146,6 +165,27 @@ export const execMock = (opts: ExecMockOptions = {}): ExecImpl => {
 
     if (path.endsWith("lsof") || path.endsWith("ps")) return { stdout: "", stderr: "" };
 
+    if (args.includes("simctl") && args.includes("launch")) {
+      // simctl opens the redirects as part of the spawn, before it returns, and
+      // appends rather than truncates. Faked the same way, so the code that
+      // goes looking for the file afterwards runs against a real file.
+      const redirects = new Set(
+        args
+          .filter((arg) => arg.startsWith("--stdout=") || arg.startsWith("--stderr="))
+          .map((arg) => arg.slice(arg.indexOf("=") + 1)),
+      );
+      for (const redirect of redirects) {
+        const landed = opts.simulatorRoot
+          ? join(opts.simulatorRoot, redirect.replace(/^\/private(?=\/)/, ""))
+          : redirect;
+        await mkdir(dirname(landed), { recursive: true });
+        await appendFile(landed, opts.launchOutput ?? "");
+      }
+      // `launch [--flags] <udid> <bundle id> [app argv]`.
+      const bundleId = args.slice(args.indexOf("launch") + 1).filter((a) => !a.startsWith("--"))[1];
+      return { stdout: `${bundleId}: 4242\n`, stderr: "" };
+    }
+
     if (argv.includes("list devices")) return { stdout: DEVICES_JSON, stderr: "" };
     if (argv.includes("list runtimes")) return { stdout: RUNTIMES_JSON, stderr: "" };
     if (argv.includes("list devicetypes")) return { stdout: DEVICETYPES_JSON, stderr: "" };
@@ -178,9 +218,21 @@ export const spawnMock =
 
 export const connect = async (
   env: Record<string, string> = {},
-  opts: { exec?: ExecImpl; fetch?: FetchLike; spawnRunner?: SpawnRunner } = {},
+  opts: {
+    exec?: ExecImpl;
+    fetch?: FetchLike;
+    spawnRunner?: SpawnRunner;
+    processAlive?: ProcessAlive;
+  } = {},
 ) => {
-  const config: Config = loadConfig(env, ABSENT_CONFIG);
+  const config: Config = loadConfig(
+    {
+      IOS_SIMULATOR_OUTPUT_DIR: scratchDir(),
+      IOS_SIMULATOR_CRASH_REPORTS_DIR: ABSENT_REPORTS,
+      ...env,
+    },
+    ABSENT_CONFIG,
+  );
   const { server, client } = createServer({
     config,
     exec: opts.exec ?? execMock(),
@@ -188,6 +240,8 @@ export const connect = async (
     // Defaulted, never optional: a test that reached the real one would leave an
     // xcodebuild running on whoever ran the suite.
     spawnRunner: opts.spawnRunner ?? spawnMock(),
+    // Never a real kill(2): pid 4242 may well be something on this machine.
+    processAlive: opts.processAlive ?? (() => true),
   });
 
   // Both halves of a linked pair must come from the *same* package: v2 exports
@@ -200,6 +254,7 @@ export const connect = async (
 
   return {
     client,
+    config,
     toolNames: async (): Promise<string[]> =>
       (await mcp.listTools()).tools.map((t) => t.name).toSorted(),
     tools: async () => (await mcp.listTools()).tools,

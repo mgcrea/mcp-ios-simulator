@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -947,6 +948,14 @@ describe("the runner", () => {
     expect(result.port).toBe(8101);
     expect(spawned[0]?.env["USE_PORT"]).toBe("8101");
     expect(spawned[0]?.env["IOS_SIMULATOR_ID"]).toBe(BOOTED_UDID);
+  });
+
+  it("hands bash a wda.sh that exists, from a checkout as from dist", async () => {
+    const spawned: { command: string; args: string[]; env: Record<string, string> }[] = [];
+    await (
+      await connect({}, { spawnRunner: spawnMock(spawned) })
+    ).call("ios_simulator_restart_wda");
+    expect(existsSync(String(spawned[0]?.args[0]))).toBe(true);
   });
 
   it("tells wda.sh which node to run, for a host with none on PATH", async () => {

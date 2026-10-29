@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, open } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -39,7 +40,7 @@ const scriptPath = (): string => {
     join(here, "..", "scripts", "wda.sh"),
     join(here, "..", "..", "scripts", "wda.sh"),
   ]) {
-    return candidate;
+    if (existsSync(candidate)) return candidate;
   }
   throw new IosError("Could not find `scripts/wda.sh` beside this module.");
 };

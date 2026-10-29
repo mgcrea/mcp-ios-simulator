@@ -664,6 +664,18 @@ describe("crash logs", () => {
     expect(none.total).toBe(0);
   });
 
+  it("reads each report's head once, since a written .ips never changes", async () => {
+    // A Mac holds hundreds of reports, and every list read the head of each.
+    // Proven by changing a file under an unchanged name: the second list is
+    // answered from what the first one read.
+    const dir = await reportsDir();
+    const harness = await connect({ IOS_SIMULATOR_CRASH_REPORTS_DIR: dir });
+    const first = await harness.call("ios_simulator_list_crash_logs");
+    await writeFile(join(dir, "Canopy-2026-10-08-232826.ips"), "not a report any more");
+    const second = await harness.call("ios_simulator_list_crash_logs");
+    expect(second.reports).toEqual(first.reports);
+  });
+
   it("is empty, not an error, when the reports directory does not exist", async () => {
     const result = await (await connect()).call("ios_simulator_list_crash_logs");
     expect(result).toMatchObject({ isToolError: false, total: 0 });

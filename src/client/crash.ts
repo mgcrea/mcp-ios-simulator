@@ -106,6 +106,14 @@ const listIps = async (dir: string): Promise<string[]> => {
 };
 
 /**
+ * What each report's head said, by path; `null` for one that is not from a
+ * simulator. A written `.ips` never changes and its name carries a timestamp,
+ * so after the first list only new reports cost a read. A Mac with Xcode
+ * holds hundreds of them, and every list used to open each one.
+ */
+const scanned = new Map<string, CrashReportRow | null>();
+
+/**
  * Every simulator report in `dir`, newest first. Reads the first 8 KB of each
  * `.ips`, never the whole file, except to find the UDID in the rare report
  * whose `coalitionName` did not fit in that.
@@ -117,12 +125,20 @@ export const listSimulatorCrashReports = async (dir: string): Promise<CrashRepor
     const batch = await Promise.all(
       names.slice(i, i + CONCURRENCY).map(async (name): Promise<CrashReportRow | undefined> => {
         const path = join(dir, name);
+        const known = scanned.get(path);
+        if (known !== undefined) return known ?? undefined;
         const head = await readHead(path).catch(() => "");
         const header = parseHeader(head);
-        if (!header || !SIMULATOR_PLATFORMS.has(Number(header.platform))) return undefined;
+        // Not cached: a report still being written has no header yet, and
+        // the next list should read it again rather than skip it for good.
+        if (!header) return undefined;
+        if (!SIMULATOR_PLATFORMS.has(Number(header.platform))) {
+          scanned.set(path, null);
+          return undefined;
+        }
         let udid = COALITION.exec(head)?.[1];
         if (!udid) udid = COALITION.exec(await readFile(path, "utf8").catch(() => ""))?.[1];
-        return {
+        const row: CrashReportRow = {
           name,
           process: header.app_name || header.name || crashProcessName(name),
           bundleId: header.bundleID,
@@ -130,6 +146,8 @@ export const listSimulatorCrashReports = async (dir: string): Promise<CrashRepor
           timestamp: header.timestamp,
           udid: udid?.toUpperCase(),
         };
+        scanned.set(path, row);
+        return row;
       }),
     );
     for (const row of batch) if (row) rows.push(row);

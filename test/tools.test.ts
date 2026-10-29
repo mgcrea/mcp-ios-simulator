@@ -768,6 +768,22 @@ describe("staging the environment", () => {
     expect(result.isToolError).toBe(true);
   });
 
+  it("refuses a bad field before applying any of the others", async () => {
+    const log: ExecCall[] = [];
+    const harness = await connect({}, { exec: execMock({ log }) });
+    const emptyBar = await harness.call("ios_simulator_set_environment", {
+      appearance: "dark",
+      status_bar: {},
+    });
+    const noBundle = await harness.call("ios_simulator_set_environment", {
+      appearance: "dark",
+      permission: { action: "grant", service: "photos" },
+    });
+    expect(emptyBar.isToolError).toBe(true);
+    expect(noBundle.isToolError).toBe(true);
+    expect(log.some((call) => call.args.includes("dark"))).toBe(false);
+  });
+
   it("wants a bundle id for grant, but not for reset", async () => {
     const harness = await connect();
     const denied = await harness.call("ios_simulator_set_environment", {

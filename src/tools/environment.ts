@@ -115,6 +115,37 @@ export const registerEnvironmentTools = (server: McpServer, client: SimulatorCli
     }) =>
       wrap(async () => {
         const target = client.requireBooted(await client.resolveTarget(device));
+        // Every refusal before any change, so a bad field never leaves the
+        // simulator half-configured behind an error.
+        const statusBarFlags = status_bar
+          ? [
+              ...(status_bar.time ? ["--time", status_bar.time] : []),
+              ...(status_bar.wifi_bars !== undefined
+                ? ["--wifiMode", "active", "--wifiBars", String(status_bar.wifi_bars)]
+                : []),
+              ...(status_bar.cellular_bars !== undefined
+                ? ["--cellularMode", "active", "--cellularBars", String(status_bar.cellular_bars)]
+                : []),
+              ...(status_bar.operator_name !== undefined
+                ? ["--operatorName", status_bar.operator_name]
+                : []),
+              ...(status_bar.battery_level !== undefined
+                ? ["--batteryLevel", String(status_bar.battery_level)]
+                : []),
+              ...(status_bar.battery_state ? ["--batteryState", status_bar.battery_state] : []),
+            ]
+          : [];
+        if (status_bar && statusBarFlags.length === 0) {
+          throw new IosError("`status_bar` was given with no fields to override.", {
+            remedy: "Set at least one field, or use `clear_status_bar` to drop the overrides.",
+          });
+        }
+        if (permission && permission.action !== "reset" && !permission.bundle_id) {
+          throw new IosError(`\`${permission.action}\` needs a bundle_id.`, {
+            remedy: "Pass the app's bundle id, or use `reset`, which does not need one.",
+          });
+        }
+
         const applied: string[] = [];
 
         if (appearance) {
@@ -138,28 +169,7 @@ export const registerEnvironmentTools = (server: McpServer, client: SimulatorCli
           applied.push("status_bar cleared");
         }
         if (status_bar) {
-          const flags = [
-            ...(status_bar.time ? ["--time", status_bar.time] : []),
-            ...(status_bar.wifi_bars !== undefined
-              ? ["--wifiMode", "active", "--wifiBars", String(status_bar.wifi_bars)]
-              : []),
-            ...(status_bar.cellular_bars !== undefined
-              ? ["--cellularMode", "active", "--cellularBars", String(status_bar.cellular_bars)]
-              : []),
-            ...(status_bar.operator_name !== undefined
-              ? ["--operatorName", status_bar.operator_name]
-              : []),
-            ...(status_bar.battery_level !== undefined
-              ? ["--batteryLevel", String(status_bar.battery_level)]
-              : []),
-            ...(status_bar.battery_state ? ["--batteryState", status_bar.battery_state] : []),
-          ];
-          if (flags.length === 0) {
-            throw new IosError("`status_bar` was given with no fields to override.", {
-              remedy: "Set at least one field, or use `clear_status_bar` to drop the overrides.",
-            });
-          }
-          await client.simctl.statusBarOverride(target.id, flags);
+          await client.simctl.statusBarOverride(target.id, statusBarFlags);
           applied.push("status_bar overridden");
         }
         if (clear_location) {
@@ -171,11 +181,6 @@ export const registerEnvironmentTools = (server: McpServer, client: SimulatorCli
           applied.push(`location=${location.latitude},${location.longitude}`);
         }
         if (permission) {
-          if (permission.action !== "reset" && !permission.bundle_id) {
-            throw new IosError(`\`${permission.action}\` needs a bundle_id.`, {
-              remedy: "Pass the app's bundle id, or use `reset`, which does not need one.",
-            });
-          }
           await client.simctl.privacy(
             target.id,
             permission.action,

@@ -3,7 +3,7 @@ import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import type { ExecImpl } from "@mgcrea/mcp-ios-core";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { pngDimensions, readScreenProfile, toDisplayInfo } from "#/client/display";
 import { parseSimctlError } from "#/client/simctl";
@@ -976,6 +976,30 @@ describe("lifecycle", () => {
 });
 
 describe("the runner", () => {
+  // restart_wda refuses when wda.sh has nothing to run, so every test here
+  // points WDA_DIR at a scratch checkout holding a built xctestrun.
+  beforeEach(async () => {
+    const wdaDir = scratchDir();
+    const products = join(wdaDir, ".build", "Build", "Products");
+    await mkdir(products, { recursive: true });
+    await writeFile(join(products, "WebDriverAgentRunner_iphonesimulator27.0.xctestrun"), "");
+    vi.stubEnv("WDA_DIR", wdaDir);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("refuses to start a runner that was never built, rather than reporting it started", async () => {
+    vi.stubEnv("WDA_DIR", scratchDir());
+    const spawned: { command: string; args: string[]; env: Record<string, string> }[] = [];
+    const result = await (
+      await connect({}, { spawnRunner: spawnMock(spawned) })
+    ).call("ios_simulator_restart_wda");
+    expect(result.isToolError).toBe(true);
+    expect(String(result.remedy)).toContain("setup");
+    expect(spawned).toHaveLength(0);
+  });
+
   it("pins USE_PORT so a second simulator cannot silently take the taps", async () => {
     // WebDriverAgent scans 8100-8199 when USE_PORT is unset, so a second
     // runner comes up healthy on 8101 and a server pointed at 8100 drives the

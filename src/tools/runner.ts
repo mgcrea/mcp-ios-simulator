@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, open } from "node:fs/promises";
+import { mkdir, open, readdir } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -45,6 +46,23 @@ const scriptPath = (): string => {
   throw new IosError("Could not find `scripts/wda.sh` beside this module.");
 };
 
+/**
+ * Whether `wda.sh run` has anything to run: the same directory and glob it
+ * looks in. Without a build it exits with "no build found" into a log nobody
+ * reads, while a detached spawn has already been reported as started.
+ */
+const runnerBuilt = async (): Promise<{ built: boolean; products: string }> => {
+  const wdaDir =
+    process.env["WDA_DIR"] || join(homedir(), ".cache", "mcp-ios-simulator", "WebDriverAgent");
+  const products = join(wdaDir, ".build", "Build", "Products");
+  const entries = await readdir(products).catch(() => [] as string[]);
+  const built = entries.some(
+    (name) =>
+      name.startsWith("WebDriverAgentRunner_iphonesimulator") && name.endsWith(".xctestrun"),
+  );
+  return { built, products };
+};
+
 export const registerRunnerTools = (
   server: McpServer,
   client: SimulatorClient,
@@ -81,6 +99,17 @@ export const registerRunnerTools = (
       wrap(async () => {
         const target = client.requireBooted(await client.resolveTarget(device));
         const usePort = port ?? client.wdaPort;
+        const { built, products } = await runnerBuilt();
+        if (!built) {
+          throw new IosError(
+            `No WebDriverAgent build in ${products}, so there is nothing to start.`,
+            {
+              remedy:
+                "Build it once with `scripts/wda.sh setup` (or `npx -p @mgcrea/mcp-ios-simulator " +
+                "ios-simulator-wda setup` from an npm install), then call ios_simulator_restart_wda again.",
+            },
+          );
+        }
         const logPath = join(outputDir, "wda.log");
         const pid = await spawnRunner("/bin/bash", [scriptPath(), "run"], {
           // `node` cannot be assumed on PATH: a host that embeds its own

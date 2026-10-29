@@ -292,6 +292,11 @@ export class SimulatorClient implements ScreenHost<SimulatorSummary> {
     return this.opts.wdaUrl ?? `http://127.0.0.1:${this.opts.wdaPort}`;
   }
 
+  /** The simulator `resolveTarget` falls back to when no hint is given. */
+  get defaultSimulatorId(): string | undefined {
+    return this.opts.defaultSimulatorId;
+  }
+
   get wdaPort(): number {
     return this.opts.wdaPort;
   }

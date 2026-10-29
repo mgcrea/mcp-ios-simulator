@@ -1077,6 +1077,20 @@ describe("diagnostics", () => {
     expect(steps[runner]).toContain("once it is booted");
   });
 
+  it("says a named simulator does not exist, even when nothing is booted", async () => {
+    // Otherwise the only advice is "boot one", and booting a typo fails.
+    const nothingBooted = DEVICES_JSON.replaceAll('"Booted"', '"Shutdown"');
+    const exec = execMock({ overrides: { "list devices": nothingBooted } });
+    const byHint = await (
+      await connect({}, { exec })
+    ).call("ios_simulator_diagnostics", { device: "iPhone Nope" });
+    const byConfig = await (
+      await connect({ IOS_SIMULATOR_ID: "iPhone Nope" }, { exec })
+    ).call("ios_simulator_diagnostics");
+    expect(String(byHint.problems)).toContain("iPhone Nope");
+    expect(String(byConfig.problems)).toContain("iPhone Nope");
+  });
+
   it("offers the shell recipe instead when the runner tool is not registered", async () => {
     const result = await (
       await connect({ IOS_SIMULATOR_ALLOW_WRITES: "0" }, { fetch: refusing })

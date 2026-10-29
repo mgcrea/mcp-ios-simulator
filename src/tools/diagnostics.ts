@@ -124,7 +124,10 @@ export const diagnose = async (
   try {
     target = await client.resolveTarget(deviceHint);
   } catch (err) {
-    if (booted.length > 0) {
+    // With nothing booted and nothing named, the resolver's "no booted
+    // simulator" only repeats the line above. A named one that does not
+    // resolve is a different problem, and booting it would fail.
+    if (booted.length > 0 || (deviceHint ?? client.defaultSimulatorId) !== undefined) {
       problems.push(err instanceof Error ? err.message : String(err));
       const remedy = (err as { remedy?: string }).remedy;
       if (remedy) nextSteps.push(remedy);

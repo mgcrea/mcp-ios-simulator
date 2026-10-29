@@ -151,9 +151,11 @@ export const registerLifecycleTools = (server: McpServer, client: SimulatorClien
         const deadline = Date.now() + wait_ms;
         let observed = target.state;
         while (Date.now() < deadline) {
-          const now = (await client.listSimulators({ fresh: true })).find(
-            (sim) => sim.id === target.id,
-          );
+          // Only the state is wanted, so only `list devices`: the runtimes a
+          // full listSimulators also reads cannot change while this waits.
+          const now = Object.values(await client.simctl.listDevices())
+            .flat()
+            .find((sim) => sim.udid === target.id);
           observed = now?.state ?? observed;
           if (observed === "Booted") break;
           await sleep(BOOT_POLL_MS);

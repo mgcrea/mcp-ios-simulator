@@ -200,13 +200,14 @@ export const registerEnvironmentTools = (server: McpServer, client: SimulatorCli
         // Read back rather than echo the request: `simctl ui` answers `unknown`
         // or `unsupported` on a runtime too old for a setting, and reporting the
         // value we asked for would hide that.
+        const [appearanceNow, contentSize, statusBar] = await Promise.all([
+          client.simctl.uiGet(target.id, "appearance"),
+          client.simctl.uiGet(target.id, "content_size"),
+          client.simctl.statusBarList(target.id),
+        ]);
         return {
           applied,
-          state: {
-            appearance: await client.simctl.uiGet(target.id, "appearance"),
-            contentSize: await client.simctl.uiGet(target.id, "content_size"),
-            statusBar: await client.simctl.statusBarList(target.id),
-          },
+          state: { appearance: appearanceNow, contentSize, statusBar },
         };
       }),
   );

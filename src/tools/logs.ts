@@ -83,7 +83,12 @@ export const registerCrashLogTools = (
         const target = device ? await client.resolveTarget(device) : undefined;
         const wanted = kinds ?? DEFAULT_CRASH_KINDS;
         const needle = process?.toLowerCase();
-        const all = await listSimulatorCrashReports(dir);
+        // The names are only wanted across simulators, and need nothing
+        // from the scan, so they are read alongside it.
+        const [all, names] = await Promise.all([
+          listSimulatorCrashReports(dir),
+          target ? undefined : simulatorNames(client),
+        ]);
         const matching = all.filter(
           (report) =>
             (!target || report.udid === target.id.toUpperCase()) &&
@@ -92,7 +97,6 @@ export const registerCrashLogTools = (
               report.process.toLowerCase().includes(needle) ||
               (report.bundleId?.toLowerCase().includes(needle) ?? false)),
         );
-        const names = target ? undefined : await simulatorNames(client);
         return {
           ...(target ? { simulator: target.name, udid: target.id } : {}),
           reports: matching.slice(0, limit).map(({ udid, bundleId, ...row }) => ({

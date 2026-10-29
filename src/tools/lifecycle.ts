@@ -108,7 +108,9 @@ export const registerLifecycleTools = (server: McpServer, client: SimulatorClien
       wrap(async () => {
         const target = await client.resolveTarget(device);
         if (state === "shutdown") {
-          if (target.state !== "Booted") {
+          // Only "Shutdown" is already there: a simulator still "Booting" is on
+          // its way up, and leaving it be would report off what is coming on.
+          if (target.state === "Shutdown") {
             return { udid: target.id, name: target.name, state: "Shutdown", alreadyThere: true };
           }
           await client.simctl.shutdown(target.id);

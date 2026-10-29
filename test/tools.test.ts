@@ -964,6 +964,16 @@ describe("lifecycle", () => {
     expect(afterBoot.some((call) => call.args.join(" ").includes("list runtimes"))).toBe(false);
   });
 
+  it("shuts down a simulator that is still booting, rather than calling it off", async () => {
+    const log: ExecCall[] = [];
+    const booting = DEVICES_JSON.replace('"Booted"', '"Booting"');
+    const result = await (
+      await connect({}, { exec: execMock({ log, overrides: { "list devices": booting } }) })
+    ).call("ios_simulator_power", { device: BOOTED_UDID, state: "shutdown" });
+    expect(log.some((call) => call.args[1] === "shutdown")).toBe(true);
+    expect(result.alreadyThere).toBeUndefined();
+  });
+
   it("does not boot a simulator implicitly, however unambiguous the target", async () => {
     const log: ExecCall[] = [];
     await (

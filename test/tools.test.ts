@@ -933,10 +933,15 @@ describe("lifecycle", () => {
       device: BOOTED_UDID,
       state: "booted",
       open_window: false,
-      wait_ms: 0,
+      wait_ms: 5000,
     });
     expect(log.some((call) => call.args[1] === "boot")).toBe(true);
     expect(result.alreadyThere).toBeUndefined();
+    // The wait reads the device list alone; runtimes cannot change under it.
+    expect(result.state).toBe("Booted");
+    expect(result.warning).toBeUndefined();
+    const afterBoot = log.slice(log.findIndex((call) => call.args[1] === "boot"));
+    expect(afterBoot.some((call) => call.args.join(" ").includes("list runtimes"))).toBe(false);
   });
 
   it("does not boot a simulator implicitly, however unambiguous the target", async () => {

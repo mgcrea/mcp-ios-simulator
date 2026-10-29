@@ -112,6 +112,14 @@ export class SimulatorClient implements ScreenHost<SimulatorSummary> {
   }
 
   /**
+   * Drop the cached list. Called after a tool changes a simulator's state, so
+   * the next call within the cache window does not act on the state before it.
+   */
+  forgetSimulators(): void {
+    this.cache = undefined;
+  }
+
+  /**
    * Resolve a hint to exactly one simulator, or refuse.
    *
    * The device server's rule — never guess between two — transfers, but

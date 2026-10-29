@@ -892,6 +892,36 @@ describe("lifecycle", () => {
     expect(String(result.warning)).toContain("no window could be opened");
   });
 
+  it("boots a simulator it has just shut down, rather than trusting the cached state", async () => {
+    // simctl's state as of the last call: shut down by `shutdown`, up by `boot`.
+    const log: ExecCall[] = [];
+    const devices = (): string => {
+      const verbs = log.map((call) => call.args[1]);
+      if (verbs.lastIndexOf("shutdown") < verbs.lastIndexOf("boot")) return DEVICES_JSON;
+      if (!verbs.includes("shutdown")) return DEVICES_JSON;
+      const parsed = JSON.parse(DEVICES_JSON) as {
+        devices: Record<string, { udid: string; state: string }[]>;
+      };
+      for (const sim of Object.values(parsed.devices).flat()) {
+        if (sim.udid === BOOTED_UDID) sim.state = "Shutdown";
+      }
+      return JSON.stringify(parsed);
+    };
+    const harness = await connect(
+      {},
+      { exec: execMock({ log, overrides: { "list devices": devices } }) },
+    );
+    await harness.call("ios_simulator_power", { device: BOOTED_UDID, state: "shutdown" });
+    const result = await harness.call("ios_simulator_power", {
+      device: BOOTED_UDID,
+      state: "booted",
+      open_window: false,
+      wait_ms: 0,
+    });
+    expect(log.some((call) => call.args[1] === "boot")).toBe(true);
+    expect(result.alreadyThere).toBeUndefined();
+  });
+
   it("does not boot a simulator implicitly, however unambiguous the target", async () => {
     const log: ExecCall[] = [];
     await (

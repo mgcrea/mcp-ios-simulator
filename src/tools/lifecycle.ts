@@ -112,11 +112,15 @@ export const registerLifecycleTools = (server: McpServer, client: SimulatorClien
             return { udid: target.id, name: target.name, state: "Shutdown", alreadyThere: true };
           }
           await client.simctl.shutdown(target.id);
+          client.forgetSimulators();
           return { udid: target.id, name: target.name, state: "Shutdown" };
         }
 
         const already = target.state === "Booted";
-        if (!already) await client.simctl.boot(target.id);
+        if (!already) {
+          await client.simctl.boot(target.id);
+          client.forgetSimulators();
+        }
         // A window that will not open is a warning, not a failed boot: the boot
         // has already been accepted, and reporting an error over a simulator
         // that is coming up sends the caller to retry something that worked.
@@ -191,6 +195,7 @@ export const registerLifecycleTools = (server: McpServer, client: SimulatorClien
         if (wasBooted) await client.simctl.shutdown(target.id);
         await client.simctl.erase(target.id);
         if (wasBooted) await client.simctl.boot(target.id);
+        client.forgetSimulators();
         return {
           udid: target.id,
           name: target.name,

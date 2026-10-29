@@ -82,10 +82,17 @@ export const registerRunnerTools = (
         const usePort = port ?? client.wdaPort;
         const logPath = join(outputDir, "wda.log");
         const pid = await spawnRunner("/bin/bash", [scriptPath(), "run"], {
+          // `node` cannot be assumed on PATH: a host that embeds its own
+          // runtime (Bastion runs this server off its bundled node) leaves
+          // nothing called `node` to find, and `wda.sh run` dies resolving the
+          // simulator while this tool reports a pid. Same fix as the device
+          // server's runner.
           env: {
             IOS_SIMULATOR_ID: target.id,
             IOS_SIMULATOR_WDA_PORT: String(usePort),
             USE_PORT: String(usePort),
+            NODE: process.execPath,
+            PATH: `${dirname(process.execPath)}:${process.env["PATH"] ?? ""}`,
           },
           logPath,
         });

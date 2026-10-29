@@ -1,5 +1,5 @@
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import type { ExecImpl } from "@mgcrea/mcp-ios-core";
 import { describe, expect, it } from "vitest";
@@ -917,6 +917,15 @@ describe("the runner", () => {
     expect(result.port).toBe(8101);
     expect(spawned[0]?.env["USE_PORT"]).toBe("8101");
     expect(spawned[0]?.env["IOS_SIMULATOR_ID"]).toBe(BOOTED_UDID);
+  });
+
+  it("tells wda.sh which node to run, for a host with none on PATH", async () => {
+    const spawned: { command: string; args: string[]; env: Record<string, string> }[] = [];
+    await (
+      await connect({}, { spawnRunner: spawnMock(spawned) })
+    ).call("ios_simulator_restart_wda");
+    expect(spawned[0]?.env["NODE"]).toBe(process.execPath);
+    expect(spawned[0]?.env["PATH"]?.split(":")[0]).toBe(dirname(process.execPath));
   });
 });
 

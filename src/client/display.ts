@@ -116,7 +116,7 @@ export const toDisplayInfo = (
   profile: ScreenProfile,
   capture?: { width: number; height: number },
 ): DisplayInfo => {
-  const scale = profile.mainScreenScale ?? 1;
+  const scale = profile.mainScreenScale;
   const pixelWidth = capture?.width ?? profile.mainScreenWidth;
   const pixelHeight = capture?.height ?? profile.mainScreenHeight;
 
@@ -125,6 +125,15 @@ export const toDisplayInfo = (
       remedy:
         "The device type's profile.plist could not be read and no screenshot was available. " +
         "Run ios_simulator_diagnostics — an unavailable runtime is the usual cause.",
+    });
+  }
+  // Never guessed: a scale of 1 on a 3x screen reports pixels as points, and
+  // every tap made from that answer lands three times too far out.
+  if (!scale) {
+    throw new IosError("Could not determine the simulator's screen scale.", {
+      remedy:
+        "The device type's profile.plist could not be read, so points cannot be told from " +
+        "pixels. Run ios_simulator_diagnostics — an unavailable runtime is the usual cause.",
     });
   }
 

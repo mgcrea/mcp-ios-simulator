@@ -249,6 +249,11 @@ describe("geometry", () => {
     expect(display.orientation).toBe("landscape");
   });
 
+  it("refuses to guess a scale it could not read, rather than reporting pixels as points", () => {
+    // A scale of 1 on a 3x screen puts every tap three times too far out.
+    expect(() => toDisplayInfo({}, { width: 1206, height: 2622 })).toThrow(/scale/);
+  });
+
   it("reads the profile again after a failed read, rather than caching the failure", async () => {
     // One transient plutil failure must not pin the device type at scale 1
     // for the life of the server: every tap would land 3x off.

@@ -234,7 +234,8 @@ export class SimulatorClient implements ScreenHost<SimulatorSummary> {
           })
         : {};
       // A read that found no scale is a failure, not a profile: cached, it
-      // would pin this device type at scale 1 until the server restarts.
+      // would keep this device type's geometry failing until the server
+      // restarts, where the next read may well succeed.
       if (id && profile.mainScreenScale !== undefined) this.profiles.set(id, profile);
     }
     const capture = capturePng ? pngDimensions(Buffer.from(capturePng, "base64")) : undefined;

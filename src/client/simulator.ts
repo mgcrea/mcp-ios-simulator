@@ -233,7 +233,9 @@ export class SimulatorClient implements ScreenHost<SimulatorSummary> {
             timeoutMs: this.execTimeoutMs,
           })
         : {};
-      if (id) this.profiles.set(id, profile);
+      // A read that found no scale is a failure, not a profile: cached, it
+      // would pin this device type at scale 1 until the server restarts.
+      if (id && profile.mainScreenScale !== undefined) this.profiles.set(id, profile);
     }
     const capture = capturePng ? pngDimensions(Buffer.from(capturePng, "base64")) : undefined;
     return toDisplayInfo(profile, capture);

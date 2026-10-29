@@ -249,6 +249,26 @@ describe("geometry", () => {
     expect(display.orientation).toBe("landscape");
   });
 
+  it("reads the profile again after a failed read, rather than caching the failure", async () => {
+    // One transient plutil failure must not pin the device type at scale 1
+    // for the life of the server: every tap would land 3x off.
+    const base = execMock();
+    let failures = 1;
+    const exec: ExecImpl = async (path, args, timeoutMs) => {
+      if (path.endsWith("plutil") && String(args[args.length - 1]).endsWith(".plist")) {
+        if (failures > 0) {
+          failures -= 1;
+          throw new Error("plutil: transient failure");
+        }
+      }
+      return base(path, args, timeoutMs);
+    };
+    const { client } = await connect({}, { exec });
+    const target = await client.resolveTarget(BOOTED_UDID);
+    await client.display(target, TINY_PNG).catch(() => undefined);
+    expect((await client.display(target, TINY_PNG)).pointScale).toBe(3);
+  });
+
   it("reports orientation as unknown rather than guessing when nothing was captured", () => {
     const display = toDisplayInfo({
       mainScreenWidth: 1206,

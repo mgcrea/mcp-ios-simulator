@@ -849,6 +849,28 @@ describe("staging the environment", () => {
   });
 });
 
+describe("what is listed per call", () => {
+  it("reads the installed runtimes once, not on every tool call", async () => {
+    // Every call resolves its simulator, and past the 2s list cache that ran
+    // `list runtimes` as well as `list devices`. Runtimes change with an
+    // Xcode install, as device types do, and those were already read once.
+    const log: ExecCall[] = [];
+    const harness = await connect({}, { exec: execMock({ log }) });
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      await harness.call("ios_simulator_list_apps", { device: BOOTED_UDID });
+      vi.setSystemTime(Date.now() + 3000);
+      await harness.call("ios_simulator_list_apps", { device: BOOTED_UDID });
+    } finally {
+      vi.useRealTimers();
+    }
+    const count = (verb: string): number =>
+      log.filter((call) => call.args.join(" ").includes(verb)).length;
+    expect(count("list devices")).toBe(2);
+    expect(count("list runtimes")).toBe(1);
+  });
+});
+
 describe("listing simulators", () => {
   it("leaves out the orphans nobody can use, and says how many it left out", async () => {
     const result = await (await connect()).call("ios_simulator_list");

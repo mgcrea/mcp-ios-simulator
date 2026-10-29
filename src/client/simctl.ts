@@ -173,6 +173,12 @@ export class Simctl {
   private readonly exec: ExecImpl;
   /** Device types change only when Xcode is updated; re-reading is pure cost. */
   private deviceTypes: RawDeviceType[] | undefined;
+  /**
+   * Read once, like device types: both change only when Xcode or a runtime is
+   * installed, and every tool call resolves a simulator. The cost is that a
+   * runtime added or deleted while this server runs is seen after a restart.
+   */
+  private runtimes: RawRuntime[] | undefined;
 
   constructor(opts: SimctlOptions) {
     this.opts = opts;
@@ -246,7 +252,9 @@ export class Simctl {
   }
 
   async listRuntimes(): Promise<RawRuntime[]> {
-    return (await this.runJson<{ runtimes?: RawRuntime[] }>(["list", "runtimes"])).runtimes ?? [];
+    this.runtimes ??=
+      (await this.runJson<{ runtimes?: RawRuntime[] }>(["list", "runtimes"])).runtimes ?? [];
+    return this.runtimes;
   }
 
   async listDeviceTypes(): Promise<RawDeviceType[]> {

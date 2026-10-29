@@ -1,14 +1,10 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
+import { CommandTimeoutError } from "#/client/errors";
 import { toListRow } from "#/client/shape";
 import type { SimulatorClient } from "#/client/simulator";
 import { confirmArg, deviceArg, wrap } from "#/tools/util";
-
-/** Booting is slow and visible; this is how long `power` waits to see it land. */
-const BOOT_POLL_MS = 500;
-
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 export const registerListTool = (server: McpServer, client: SimulatorClient): void => {
   server.registerTool(
@@ -147,32 +143,37 @@ export const registerLifecycleTools = (server: McpServer, client: SimulatorClien
             });
         }
 
-        // Poll rather than trust the exit code: `simctl boot` returns as soon as
-        // CoreSimulator has accepted the request, well before the device is
-        // usable, and every tool after this one would fail on a half-booted one.
-        const deadline = Date.now() + wait_ms;
-        let observed = target.state;
-        while (Date.now() < deadline) {
-          // Only the state is wanted, so only `list devices`: the runtimes a
-          // full listSimulators also reads cannot change while this waits.
-          const now = Object.values(await client.simctl.listDevices())
-            .flat()
-            .find((sim) => sim.udid === target.id);
-          observed = now?.state ?? observed;
-          if (observed === "Booted") break;
-          await sleep(BOOT_POLL_MS);
+        // Wait on bootstatus rather than trust the exit code or the listed
+        // state: `simctl boot` returns as soon as CoreSimulator has accepted
+        // the request, and `list` already says "Booted" then, well before the
+        // device is usable. Every tool after this one would fail on a
+        // half-booted one.
+        let ready = already;
+        let waitWarning = `Not waited for, since wait_ms is 0: it may still be starting up.`;
+        if (!already && wait_ms > 0) {
+          try {
+            await client.simctl.bootstatus(target.id, wait_ms);
+            ready = true;
+          } catch (err) {
+            waitWarning =
+              err instanceof CommandTimeoutError
+                ? `Not finished booting after ${wait_ms}ms. Raise wait_ms, or check Xcode.`
+                : `Booted, but could not confirm it finished: ${
+                    err instanceof Error ? err.message : String(err)
+                  }`;
+          }
         }
+        const now = Object.values(await client.simctl.listDevices())
+          .flat()
+          .find((sim) => sim.udid === target.id);
+        const observed = now?.state ?? target.state;
         return {
           udid: target.id,
           name: target.name,
           state: observed,
           ...(already ? { alreadyThere: true } : {}),
           ...(windowNote ? { note: windowNote } : {}),
-          ...(observed === "Booted"
-            ? windowWarning
-              ? { warning: windowWarning }
-              : {}
-            : { warning: `Still ${observed} after ${wait_ms}ms. Raise wait_ms, or check Xcode.` }),
+          ...(ready ? (windowWarning ? { warning: windowWarning } : {}) : { warning: waitWarning }),
         };
       }),
   );

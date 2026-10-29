@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import type { ExecImpl } from "@mgcrea/mcp-ios-core";
+import { CommandTimeoutError, type ExecImpl } from "@mgcrea/mcp-ios-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { pngDimensions, readScreenProfile, toDisplayInfo } from "#/client/display";
@@ -1001,6 +1001,32 @@ describe("lifecycle", () => {
     expect(result.warning).toBeUndefined();
     const afterBoot = log.slice(log.findIndex((call) => call.args[1] === "boot"));
     expect(afterBoot.some((call) => call.args.join(" ").includes("list runtimes"))).toBe(false);
+    // Readiness is what bootstatus reports: measured on iOS 27.0, `list` says
+    // "Booted" 0.4s in, and the system is ready 17s later.
+    const status = afterBoot.find((call) => call.args[1] === "bootstatus");
+    expect(status?.args).toEqual(["simctl", "bootstatus", BOOTED_UDID]);
+  });
+
+  it("says the boot is unfinished when bootstatus outlives wait_ms", async () => {
+    const shutDown = DEVICES_JSON.replace('"Booted"', '"Shutdown"');
+    const base = execMock({ overrides: { "list devices": shutDown } });
+    const exec: ExecImpl = async (path, args, timeoutMs) => {
+      if (args.includes("bootstatus")) {
+        expect(timeoutMs).toBe(1500);
+        throw new CommandTimeoutError(`${path} ${args.join(" ")}`, timeoutMs);
+      }
+      return base(path, args, timeoutMs);
+    };
+    const result = await (
+      await connect({}, { exec })
+    ).call("ios_simulator_power", {
+      device: BOOTED_UDID,
+      state: "booted",
+      open_window: false,
+      wait_ms: 1500,
+    });
+    expect(result.isToolError).toBe(false);
+    expect(String(result.warning)).toContain("Not finished booting after 1500ms");
   });
 
   it("shuts down a simulator that is still booting, rather than calling it off", async () => {

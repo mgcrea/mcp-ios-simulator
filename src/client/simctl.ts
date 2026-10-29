@@ -187,13 +187,9 @@ export class Simctl {
   }
 
   /** Raw stdout, for the subcommands that answer in prose. */
-  private async run(args: string[]): Promise<string> {
+  private async run(args: string[], timeoutMs = this.opts.timeoutMs): Promise<string> {
     this.opts.logger?.debug?.("simctl", ...args);
-    const { stdout } = await this.exec(
-      this.opts.xcrunPath,
-      ["simctl", ...args],
-      this.opts.timeoutMs,
-    );
+    const { stdout } = await this.exec(this.opts.xcrunPath, ["simctl", ...args], timeoutMs);
     return stdout;
   }
 
@@ -269,6 +265,17 @@ export class Simctl {
   async boot(udid: string): Promise<void> {
     assertNotBulkTarget(udid);
     await this.run(["boot", udid]);
+  }
+
+  /**
+   * Wait until a booting simulator has finished, or `timeoutMs` passes (a
+   * `CommandTimeoutError`). Not the state in `list`: measured on an iOS 27.0
+   * runtime, that reads "Booted" 0.4s after `boot` returns, while this returns
+   * 17s later, once the system is up.
+   */
+  async bootstatus(udid: string, timeoutMs: number): Promise<void> {
+    assertNotBulkTarget(udid);
+    await this.run(["bootstatus", udid], timeoutMs);
   }
 
   async shutdown(udid: string): Promise<void> {

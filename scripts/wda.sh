@@ -20,11 +20,11 @@
 #   USE_PORT                 same thing, for people driving xcodebuild by hand
 #   NODE                     node binary         (default: node off PATH)
 #   WDA_DIR                  checkout location   (default: ~/.cache/mcp-ios-simulator/WebDriverAgent)
-#   WDA_REF                  git tag to pin      (default: v16.12.3)
+#   WDA_REF                  git tag to pin      (default: v16.15.3)
 set -euo pipefail
 
 WDA_DIR="${WDA_DIR:-$HOME/.cache/mcp-ios-simulator/WebDriverAgent}"
-WDA_REF="${WDA_REF:-v16.12.3}"
+WDA_REF="${WDA_REF:-v16.15.3}"
 DERIVED="${WDA_DIR}/.build"
 PORT="${USE_PORT:-${IOS_SIMULATOR_WDA_PORT:-8100}}"
 # Not always on PATH: a host that embeds its own runtime leaves nothing called

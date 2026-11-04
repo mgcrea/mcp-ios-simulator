@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import {
   assertNoShellMetachars,
+  CommandError,
   createExec,
   type ExecImpl,
   type Logger,
@@ -167,6 +168,15 @@ export const assertNotBulkTarget = (udid: string): void => {
     });
   }
 };
+
+/**
+ * `io … screenshot` refusing to pick between a multi-display device's screens.
+ * Matched on simctl's own words rather than exit 22 alone, which is just
+ * EINVAL and covers any malformed argument.
+ */
+const isAmbiguousDisplay = (err: unknown): boolean =>
+  err instanceof CommandError &&
+  /Cannot choose between \d+ displays/.test(`${String(err.details ?? "")}\n${err.message}`);
 
 export class Simctl {
   private readonly opts: SimctlOptions;
@@ -435,13 +445,29 @@ export class Simctl {
    *
    * A successful capture also writes a `Note: No display specified…` line to
    * stderr, so non-empty stderr is not a failure here.
+   *
+   * A device with two displays — the iPhone Duo, iOS 27.1 runtime — makes the
+   * bare call fail outright: exit 22, "Cannot choose between 2 displays.
+   * Specify one with --display". Only then is it retried on `--display=primary`,
+   * so a single-display simulator and Xcode 26 never see the flag. Primary
+   * rather than whichever is lit, because it is the display WebDriverAgent
+   * addresses when no `currentDisplayId` is set: a capture of the other one
+   * would put every tap read off it in the wrong coordinate space. On an open
+   * Duo that display is black (appium/appium-xcuitest-driver#3012); driving
+   * the inner one means selecting it in WDA too, which nothing here does yet.
+   * The `internal` alias the help text offers fails on the Duo with exit 22.
    */
   async screenshotPng(udid: string): Promise<string> {
     assertNotBulkTarget(udid);
     const dir = await mkdtemp(join(tmpdir(), "simshot-"));
     const path = join(dir, "shot.png");
     try {
-      await this.run(["io", udid, "screenshot", "--type=png", path]);
+      try {
+        await this.run(["io", udid, "screenshot", "--type=png", path]);
+      } catch (err) {
+        if (!isAmbiguousDisplay(err)) throw err;
+        await this.run(["io", udid, "screenshot", "--type=png", "--display=primary", path]);
+      }
       return (await readFile(path)).toString("base64");
     } finally {
       await rm(dir, { recursive: true, force: true });

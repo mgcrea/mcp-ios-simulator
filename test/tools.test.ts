@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import { CommandTimeoutError, type ExecImpl } from "@mgcrea/mcp-ios-core";
+import { CommandError, CommandTimeoutError, type ExecImpl } from "@mgcrea/mcp-ios-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { pngDimensions, readScreenProfile, toDisplayInfo } from "#/client/display";
@@ -192,6 +192,66 @@ describe("the screen", () => {
     expect(io).toBeDefined();
     expect(io?.args.at(-1)).toMatch(/\.png$/);
     expect(io?.args).not.toContain("-");
+  });
+
+  // The iPhone Duo simulator (iOS 27.1 runtime) has two displays, and a bare
+  // `io <udid> screenshot` refuses to pick one. Measured on Xcode 27.2, closed
+  // Duo: exit 22 with this stderr; `--display=primary` then captures the
+  // 1398×2034 outer display, which is also the one WebDriverAgent addresses
+  // when no `currentDisplayId` is set — so screenshot and tap coordinates stay
+  // in one space.
+  const DUO_STDERR = [
+    "An error was encountered processing the command (domain=NSPOSIXErrorDomain, code=22):",
+    "Cannot choose between 2 displays. Specify one with --display:",
+    "    --display=3  LCD-1 (primary-1) 2007x2853",
+    "    --display=1  LCD (primary) 1398x2034",
+    "Invalid argument",
+  ].join("\n");
+
+  const twoDisplays = (log: ExecCall[], stderr = DUO_STDERR): ExecImpl => {
+    const inner = execMock({ log });
+    return async (path, args, timeoutMs) => {
+      if (args.includes("screenshot") && !args.some((arg) => arg.startsWith("--display="))) {
+        log.push({ path, args });
+        throw new CommandError(`\`simctl io\` failed: ${stderr}`, {
+          command: `${path} ${args.join(" ")}`,
+          exitCode: 22,
+          details: stderr,
+        });
+      }
+      return inner(path, args, timeoutMs);
+    };
+  };
+
+  it("screenshots a two-display simulator by retrying on its primary display", async () => {
+    const log: ExecCall[] = [];
+    const result = await (
+      await connect({}, { exec: twoDisplays(log) })
+    ).call("ios_simulator_screenshot");
+    expect(result.isToolError).toBe(false);
+    expect(result.hasImage).toBe(true);
+    const shots = log.filter((call) => call.args.includes("screenshot"));
+    expect(shots).toHaveLength(2);
+    expect(shots[1]?.args).toContain("--display=primary");
+  });
+
+  it("leaves a single-display simulator's capture exactly as it was", async () => {
+    // No `--display` at all: Xcode 26.6 is untouched, and so is every
+    // simulator that was never ambiguous.
+    const log: ExecCall[] = [];
+    await (await connect({}, { exec: execMock({ log }) })).call("ios_simulator_screenshot");
+    const shots = log.filter((call) => call.args.includes("screenshot"));
+    expect(shots).toHaveLength(1);
+    expect(shots[0]?.args.some((arg) => arg.startsWith("--display="))).toBe(false);
+  });
+
+  it("does not retry a screenshot that failed for any other reason", async () => {
+    const log: ExecCall[] = [];
+    const result = await (
+      await connect({}, { exec: twoDisplays(log, "Unable to find device") })
+    ).call("ios_simulator_screenshot");
+    expect(result.isToolError).toBe(true);
+    expect(log.filter((call) => call.args.includes("screenshot"))).toHaveLength(1);
   });
 
   it("reads the tree through WebDriverAgent and flattens it", async () => {

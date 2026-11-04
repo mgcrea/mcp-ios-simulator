@@ -95,8 +95,8 @@ failure.
 | `IOS_SIMULATOR_ID`                | the only booted simulator          | UDID, name, or `booted`. Two booted and no value is an error that names them. |
 | `IOS_SIMULATOR_ALLOW_WRITES`      | **on**                             | `0` drops the seventeen driving tools from `tools/list`.                      |
 | `IOS_SIMULATOR_LAUNCH_ARGS`       | none                               | Launch arguments applied when `launch` passes none of its own.                |
-| `IOS_SIMULATOR_WDA_PORT`          | `8100`                             | Must match the runner's `USE_PORT`. One port per simulator.                   |
-| `IOS_SIMULATOR_WDA_URL`           | `http://127.0.0.1:<port>`          | Explicit override; rarely needed.                                             |
+| `IOS_SIMULATOR_WDA_PORT`          | `8100`                             | Where `restart_wda` starts looking for a free port; the fallback runner port. |
+| `IOS_SIMULATOR_WDA_URL`           | none                               | Pins every simulator to one runner URL; rarely needed.                        |
 | `IOS_SIMULATOR_MAX_TREE_BYTES`    | `24000`                            | Byte cap on a `ui_tree` payload.                                              |
 | `IOS_SIMULATOR_TIMEOUT_MS`        | `120000`                           | Budget for one `simctl` call; a boot is slow.                                 |
 | `IOS_SIMULATOR_WDA_TIMEOUT_MS`    | `30000`                            | Budget for one WebDriverAgent call.                                           |
@@ -136,6 +136,13 @@ scripts/wda.sh setup   # ~2 minutes
 scripts/wda.sh run     # leave this running
 scripts/wda.sh status  # is it answering?
 ```
+
+Several simulators can be driven at once, each with its own runner. The server
+finds a simulator's runner by its port's owner, so no port needs configuring:
+`ios_simulator_restart_wda {"device":"…"}` starts one on the first free port, and
+from a shell `IOS_SIMULATOR_ID=<udid> USE_PORT=8101 scripts/wda.sh run` does the
+same by hand. A call for a simulator whose runner is not up is refused rather
+than sent to another simulator's.
 
 Installed from npm, the same script is the `ios-simulator-wda` binary:
 
@@ -223,8 +230,9 @@ Xcode 27.0 (27A266a) with an iOS 27.0 runtime.
 - **WebDriverAgent scans ports 8100-8199 when `USE_PORT` is unset.** With two
   booted simulators, the second runner comes up healthy on 8101 and a server
   pointed at 8100 drives the _first_ one while every call reports success.
-  `scripts/wda.sh` always pins `USE_PORT`, and `diagnostics` reports the port's
-  real owner via `SIMULATOR_UDID` from `ps -Eww`.
+  `scripts/wda.sh` always pins `USE_PORT`, and every UI call looks up the runner
+  it needs by its owner — `SIMULATOR_UDID` from `ps -Eww` on each listener
+  `lsof` finds in 8100-8199 — rather than trusting a fixed port.
 - **`listapps` returns an old-style NeXTSTEP plist, not JSON.** `--json` is a flag
   on `list` and nothing else.
 - **A status bar override survives a reboot.** Clear it or it quietly pollutes

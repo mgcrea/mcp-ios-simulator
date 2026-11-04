@@ -28,43 +28,13 @@ export type Diagnosis = {
     reachable: boolean;
     /** Which simulator actually owns the port — the failure unique to this server. */
     boundTo?: string;
+    /** Every simulator runner listening on this Mac, so several can be told apart. */
+    runners?: { udid: string; name: string; port: number }[];
     state?: unknown;
     error?: string;
   };
   problems: string[];
   nextSteps: string[];
-};
-
-/**
- * Which simulator owns the WebDriverAgent port.
- *
- * This check has no device-server equivalent and it is the most valuable one
- * here. A simulator shares the host's network stack, so a runner's port is a
- * *host* port, and WebDriverAgent scans 8100-8199 when `USE_PORT` is unset. Two
- * booted simulators therefore give you a second runner answering healthily on
- * 8101 while a server pointed at 8100 drives the first one and reports success
- * on every call.
- *
- * Every process inside a simulator carries `SIMULATOR_UDID` in its environment,
- * and `ps -Eww` prints it, so the port's real owner is knowable rather than
- * assumed.
- */
-const portOwner = async (client: SimulatorClient, port: number): Promise<string | undefined> => {
-  try {
-    const { stdout: pids } = await client.exec(
-      "/usr/sbin/lsof",
-      ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"],
-      5000,
-    );
-    const pid = pids.trim().split("\n")[0];
-    if (!pid) return undefined;
-    const { stdout: env } = await client.exec("/bin/ps", ["-Eww", "-p", pid], 5000);
-    return /SIMULATOR_UDID=([0-9A-Fa-f-]{36})/.exec(env)?.[1];
-  } catch {
-    // lsof is not always installed and needs no permissions we can assume.
-    // Not knowing the owner is a missing field, not a failure.
-    return undefined;
-  }
 };
 
 /**
@@ -147,39 +117,53 @@ export const diagnose = async (
 
   // WebDriverAgent. `reachable` and usable coincide on a simulator: there is no
   // Enable UI Automation toggle, so the device server's separate `authorized`
-  // probe would be pure latency. What replaces it is `boundTo`.
-  const url = client.wdaUrl();
-  const wda: Diagnosis["wda"] = { url, port: client.wdaPort, reachable: false };
-  try {
-    wda.state = await client.wda(target ?? ({ id: "", name: "" } as SimulatorSummary)).status();
-    wda.reachable = true;
-  } catch (err) {
-    wda.error = err instanceof Error ? err.message : String(err);
-    problems.push("WebDriverAgent is not answering, so the UI tree and the input tools will fail.");
-    // Ordered, not merely listed. The runner tool calls `requireBooted`, so on a
-    // machine with nothing booted the two steps above and below are one
-    // sequence and running them the other way round cannot work — which the
-    // previous pair of independent bullets did not say anywhere.
-    nextSteps.push(
-      (nothingBooted ? "Then, once it is booted: " : "") +
-        startRunnerRemedy(ctx.allowWrites) +
-        " Everything else — including screenshots — works without it.",
-    );
-  }
+  // probe would be pure latency. What replaces it is ownership.
+  //
+  // Every process inside a simulator carries `SIMULATOR_UDID`, so each runner's
+  // owner is knowable rather than assumed, and the runner this report probes is
+  // the one the UI tools would actually reach for the target.
+  const listeners = await client.listRunners({ fresh: true });
+  const names = new Map(simulators.map((sim) => [sim.id.toLowerCase(), sim.name]));
+  const runners = listeners.flatMap((l) =>
+    l.udid ? [{ udid: l.udid, name: names.get(l.udid.toLowerCase()) ?? l.udid, port: l.port }] : [],
+  );
 
-  if (wda.reachable) {
-    const owner = await portOwner(client, client.wdaPort);
-    if (owner) wda.boundTo = owner;
-    if (owner && target && owner.toLowerCase() !== target.id.toLowerCase()) {
-      const other = simulators.find((sim) => sim.id.toLowerCase() === owner.toLowerCase());
+  let url = client.wdaUrl();
+  let refused = false;
+  if (target) {
+    try {
+      url = await client.runnerUrl(target);
+    } catch (err) {
+      refused = true;
+      problems.push(err instanceof Error ? err.message : String(err));
+      const remedy = (err as { remedy?: string }).remedy;
+      if (remedy) nextSteps.push(remedy);
+    }
+  }
+  const port = portOf(url) ?? client.wdaPort;
+  const wda: Diagnosis["wda"] = { url, port, reachable: false, runners };
+  const owner = listeners.find((l) => l.port === port && l.udid)?.udid;
+  if (owner) wda.boundTo = owner;
+
+  if (refused) {
+    wda.error = "Not probed: the runner on this port belongs to another simulator.";
+  } else {
+    try {
+      wda.state = await (target ? client.wda(target) : client.wdaConfigured()).status();
+      wda.reachable = true;
+    } catch (err) {
+      wda.error = err instanceof Error ? err.message : String(err);
       problems.push(
-        `Port ${client.wdaPort} is owned by ${other?.name ?? owner}, not ${target.name}. ` +
-          "Every tap and every UI tree read would go to the wrong screen.",
+        "WebDriverAgent is not answering, so the UI tree and the input tools will fail.",
       );
+      // Ordered, not merely listed. The runner tool calls `requireBooted`, so on a
+      // machine with nothing booted the two steps above and below are one
+      // sequence and running them the other way round cannot work — which the
+      // previous pair of independent bullets did not say anywhere.
       nextSteps.push(
-        "WebDriverAgent scans 8100-8199 when USE_PORT is unset, so a second simulator's runner " +
-          "takes the next free port and nothing looks wrong. Give this one its own port with " +
-          "IOS_SIMULATOR_WDA_PORT and start its runner with a matching USE_PORT.",
+        (nothingBooted ? "Then, once it is booted: " : "") +
+          startRunnerRemedy(ctx.allowWrites) +
+          " Everything else — including screenshots — works without it.",
       );
     }
   }
@@ -215,6 +199,15 @@ export const diagnose = async (
   };
 };
 
+const portOf = (url: string): number | undefined => {
+  try {
+    const port = Number(new URL(url).port);
+    return port > 0 ? port : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 export const registerDiagnosticsTools = (
   server: McpServer,
   client: SimulatorClient,
@@ -227,8 +220,8 @@ export const registerDiagnosticsTools = (
       description:
         "Report both lanes separately and never fail: which simulators exist and which are " +
         "usable, which one this server would drive, its screen geometry, and whether " +
-        "WebDriverAgent is answering — including *which* simulator owns its port, which is the " +
-        "one way to catch a second runner quietly taking your taps. Start here when anything " +
+        "WebDriverAgent is answering — including every simulator's runner and its port, and " +
+        "which one the target's taps would reach. Start here when anything " +
         "else misbehaves.",
       inputSchema: z.object({ device: deviceArg }),
       annotations: { readOnlyHint: true },

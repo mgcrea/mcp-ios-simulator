@@ -17,12 +17,22 @@ import {
   scratchDir,
   spawnMock,
   TINY_PNG,
+  wdaMock,
   type ExecCall,
 } from "#test/helpers";
 
 /** A WebDriverAgent that is simply not running. */
 const refusing = async (): Promise<Response> => {
   throw new TypeError("fetch failed");
+};
+
+/** A WebDriverAgent that records which port every request reached. */
+const recording = (ports: string[]) => {
+  const inner = wdaMock();
+  return async (url: unknown, init?: unknown): Promise<Response> => {
+    ports.push(new URL(String(url)).port);
+    return inner(url, init);
+  };
 };
 
 /** A machine with no Xcode at all. */
@@ -1165,6 +1175,144 @@ describe("the runner", () => {
     ).call("ios_simulator_restart_wda");
     expect(spawned[0]?.env["NODE"]).toBe(process.execPath);
     expect(spawned[0]?.env["PATH"]?.split(":")[0]).toBe(dirname(process.execPath));
+  });
+});
+
+describe("several simulators at once", () => {
+  // The reported failure: two booted simulators, one runner on 8100 that
+  // belongs to the *other* one, and a tap for "Filiation Repro" landed on that
+  // other session's screen while every call reported success.
+  const SECOND_UDID = "C0386ADB-0B1D-4FD1-AF22-D2AB6A142901";
+  const twoBooted = (() => {
+    const parsed = JSON.parse(DEVICES_JSON) as {
+      devices: Record<string, { udid: string; state: string }[]>;
+    };
+    for (const list of Object.values(parsed.devices)) {
+      for (const device of list) if (device.udid === SECOND_UDID) device.state = "Booted";
+    }
+    return JSON.stringify(parsed);
+  })();
+
+  /** lsof and ps as they answer with these runners up, keyed pid → udid. */
+  const machine = (runners: { pid: number; port: number; udid?: string }[], log?: ExecCall[]) =>
+    execMock({
+      ...(log ? { log } : {}),
+      overrides: {
+        "list devices": twoBooted,
+        "-sTCP:LISTEN": runners.map((r) => `p${r.pid}\nf8\nn*:${r.port}\n`).join(""),
+        "pid=,command=": runners
+          .map(
+            (r) => `${r.pid} /x/WebDriverAgentRunner${r.udid ? ` SIMULATOR_UDID=${r.udid}` : ""}\n`,
+          )
+          .join(""),
+      },
+    });
+
+  it("sends each simulator's UI calls to its own runner", async () => {
+    const ports: string[] = [];
+    const harness = await connect(
+      {},
+      {
+        exec: machine([
+          { pid: 10, port: 8100, udid: BOOTED_UDID },
+          { pid: 11, port: 8101, udid: SECOND_UDID },
+        ]),
+        fetch: recording(ports),
+      },
+    );
+
+    const second = await harness.call("ios_simulator_ui_tree", { device: SECOND_UDID });
+    expect(second.isToolError).toBe(false);
+    expect(new Set(ports)).toEqual(new Set(["8101"]));
+
+    ports.length = 0;
+    const first = await harness.call("ios_simulator_tap", { device: BOOTED_UDID, x: 10, y: 10 });
+    expect(first.isToolError).toBe(false);
+    expect(new Set(ports)).toEqual(new Set(["8100"]));
+  });
+
+  it("refuses to drive another simulator's runner rather than tapping its screen", async () => {
+    const ports: string[] = [];
+    const result = await (
+      await connect(
+        {},
+        {
+          exec: machine([{ pid: 10, port: 8100, udid: BOOTED_UDID }]),
+          fetch: recording(ports),
+        },
+      )
+    ).call("ios_simulator_tap", { device: SECOND_UDID, x: 201, y: 528 });
+    expect(result.isToolError).toBe(true);
+    expect(String(result.error)).toContain("No WebDriverAgent runner belongs to appshot-iphone");
+    expect(String(result.error)).toContain("iPhone 17 Pro");
+    expect(String(result.remedy)).toContain("ios_simulator_restart_wda");
+    expect(String(result.remedy)).toContain("8101");
+    // Nothing reached the other runner at all.
+    expect(ports).toEqual([]);
+  });
+
+  it("starts a second simulator's runner on a free port, not on the first one's", async () => {
+    const spawned: { command: string; args: string[]; env: Record<string, string> }[] = [];
+    const wdaDir = scratchDir();
+    const products = join(wdaDir, ".build", "Build", "Products");
+    await mkdir(products, { recursive: true });
+    await writeFile(join(products, "WebDriverAgentRunner_iphonesimulator27.0.xctestrun"), "");
+    vi.stubEnv("WDA_DIR", wdaDir);
+    try {
+      const harness = await connect(
+        {},
+        {
+          exec: machine([
+            { pid: 10, port: 8100, udid: BOOTED_UDID },
+            // Some host process on 8101: a runner cannot bind there either.
+            { pid: 12, port: 8101 },
+          ]),
+          spawnRunner: spawnMock(spawned),
+        },
+      );
+      const fresh = await harness.call("ios_simulator_restart_wda", { device: SECOND_UDID });
+      expect(fresh.port).toBe(8102);
+      expect(spawned[0]?.env["USE_PORT"]).toBe("8102");
+      expect(spawned[0]?.env["IOS_SIMULATOR_ID"]).toBe(SECOND_UDID);
+
+      // Restarting one that already has a runner keeps its port.
+      const again = await harness.call("ios_simulator_restart_wda", { device: BOOTED_UDID });
+      expect(again.port).toBe(8100);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("lists every runner in diagnostics and flags the one that is not the target's", async () => {
+    const harness = await connect(
+      {},
+      { exec: machine([{ pid: 10, port: 8100, udid: BOOTED_UDID }]) },
+    );
+    const result = await harness.call("ios_simulator_diagnostics", { device: SECOND_UDID });
+    const wda = result.wda as Record<string, unknown>;
+    expect(wda["runners"]).toEqual([{ udid: BOOTED_UDID, name: "iPhone 17 Pro", port: 8100 }]);
+    expect(wda["boundTo"]).toBe(BOOTED_UDID);
+    expect(wda["reachable"]).toBe(false);
+    expect(String(result.problems)).toContain("No WebDriverAgent runner belongs to appshot-iphone");
+
+    const own = await harness.call("ios_simulator_diagnostics", { device: BOOTED_UDID });
+    expect(String(own.problems)).not.toContain("belongs");
+    expect((own.wda as Record<string, unknown>)["reachable"]).toBe(true);
+  });
+
+  it("still honours an explicit IOS_SIMULATOR_WDA_URL that lsof cannot attribute", async () => {
+    const ports: string[] = [];
+    const result = await (
+      await connect(
+        { IOS_SIMULATOR_WDA_URL: "http://127.0.0.1:9300" },
+        {
+          exec: machine([{ pid: 10, port: 8100, udid: BOOTED_UDID }]),
+          fetch: recording(ports),
+        },
+      )
+    ).call("ios_simulator_ui_tree", { device: SECOND_UDID });
+    expect(result.isToolError).toBe(false);
+    expect(new Set(ports)).toEqual(new Set(["9300"]));
   });
 });
 

@@ -58,6 +58,41 @@ export const wdaUnavailableRemedy = (allowWrites: boolean): string =>
   "tools works without it — screenshots go through simctl. If something else already forwards " +
   "the port, set IOS_SIMULATOR_WDA_URL.";
 
+/**
+ * The target has no runner of its own, and the port this server would fall
+ * back to is another simulator's.
+ *
+ * Refused rather than forwarded, because the failure it prevents does not look
+ * like one: the other runner answers healthily, a tap lands on someone else's
+ * screen, and the UI tree that comes back describes an app the caller never
+ * launched.
+ */
+export class RunnerBelongsElsewhereError extends IosError {
+  override readonly name = "RunnerBelongsElsewhereError";
+
+  constructor(opts: {
+    target: { name: string; id: string };
+    owner: string;
+    port: number;
+    freePort: number;
+    allowWrites: boolean;
+  }) {
+    const { target, owner, port, freePort, allowWrites } = opts;
+    super(
+      `No WebDriverAgent runner belongs to ${target.name}. Port ${port} is ${owner}'s runner, ` +
+        "so a tap or UI tree read sent there would go to that simulator's screen instead.",
+      {
+        remedy: allowWrites
+          ? `Start one for this simulator with ios_simulator_restart_wda {"device":"${target.id}"} — ` +
+            `it picks a free port (${freePort} right now) and this server finds it by itself. ` +
+            "Give it about fifteen seconds."
+          : `Start one for this simulator on a free port: IOS_SIMULATOR_ID=${target.id} ` +
+            `USE_PORT=${freePort} scripts/wda.sh run. This server finds it by itself once it answers.`,
+      },
+    );
+  }
+}
+
 /** No simulator matched, or several did and none was named. */
 export class SimulatorNotFoundError extends IosError {
   override readonly name = "SimulatorNotFoundError";

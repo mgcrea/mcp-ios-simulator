@@ -11,6 +11,7 @@ import {
 
 import { pngDimensions, readScreenProfile, toDisplayInfo } from "#/client/display";
 import {
+  RunnerBelongsElsewhereError,
   RuntimeUnavailableError,
   SimulatorNotBootedError,
   SimulatorNotFoundError,
@@ -20,6 +21,7 @@ import {
   wdaUnavailableRemedy,
 } from "#/client/errors";
 import { exists, LaunchCaptures, type ProcessAlive } from "#/client/logs";
+import { freePort, scanRunners, type RunnerListener } from "#/client/runners";
 import { summarizeDevices, type SimulatorSummary } from "#/client/shape";
 import { Simctl } from "#/client/simctl";
 
@@ -78,6 +80,7 @@ export class SimulatorClient implements ScreenHost<SimulatorSummary> {
   private readonly wdaClients = new Map<string, WdaClient>();
   /** `simctl list` is ~80ms and most tools want it twice; 2s collapses that. */
   private cache: { at: number; simulators: SimulatorSummary[] } | undefined;
+  private runnerCache: { at: number; listeners: RunnerListener[] } | undefined;
   private profiles = new Map<string, Awaited<ReturnType<typeof readScreenProfile>>>();
 
   constructor(opts: SimulatorClientOptions) {
@@ -279,15 +282,10 @@ export class SimulatorClient implements ScreenHost<SimulatorSummary> {
   }
 
   /**
-   * Where WebDriverAgent is.
-   *
-   * Unlike the device lane there is no tunnel address to derive: a simulator
-   * shares the host's network stack, so the runner's port *is* a host loopback
-   * port. That is also the trap — several booted simulators contend for the
-   * same one, and WebDriverAgent scans 8100-8199 when `USE_PORT` is unset, so a
-   * second runner comes up healthy on 8101 and a server pointed at 8100 drives
-   * the first simulator while reporting success. `ios_simulator_diagnostics`
-   * reports which simulator actually owns the port.
+   * Where WebDriverAgent is *configured* to be: IOS_SIMULATOR_WDA_URL, or the
+   * base port on loopback. Which runner a call actually reaches is decided per
+   * simulator by `runnerUrl`; this is only the fallback when nothing better is
+   * known.
    */
   wdaUrl(): string {
     return this.opts.wdaUrl ?? `http://127.0.0.1:${this.opts.wdaPort}`;
@@ -298,22 +296,119 @@ export class SimulatorClient implements ScreenHost<SimulatorSummary> {
     return this.opts.defaultSimulatorId;
   }
 
+  /** Where runner ports are allocated from, and the fallback when no owner is known. */
   get wdaPort(): number {
     return this.opts.wdaPort;
   }
 
-  wda(_target: SimulatorSummary): WdaClient {
-    const url = this.wdaUrl();
-    const existing = this.wdaClients.get(url);
+  /**
+   * Every listener in the runner ranges, attributed to its simulator. Cached
+   * for 2s: every UI call asks, and lsof plus ps costs tens of milliseconds.
+   */
+  async listRunners(opts: { fresh?: boolean } = {}): Promise<RunnerListener[]> {
+    const cached = this.runnerCache;
+    if (!opts.fresh && cached && Date.now() - cached.at < 2000) return cached.listeners;
+    const listeners = await scanRunners(this.exec, this.opts.wdaPort);
+    this.runnerCache = { at: Date.now(), listeners };
+    return listeners;
+  }
+
+  /** Called once a runner is started, so the next call looks again. */
+  forgetRunners(): void {
+    this.runnerCache = undefined;
+  }
+
+  /** The first port nothing listens on, from the base port up. */
+  async freeRunnerPort(): Promise<number> {
+    return freePort(await this.listRunners({ fresh: true }), this.opts.wdaPort);
+  }
+
+  /** The port of this simulator's own runner, when it has one. */
+  async ownRunnerPort(target: SimulatorSummary): Promise<number | undefined> {
+    const id = target.id.toLowerCase();
+    return (await this.listRunners({ fresh: true })).find((l) => l.udid?.toLowerCase() === id)
+      ?.port;
+  }
+
+  /**
+   * Which runner a call for this simulator goes to.
+   *
+   * A simulator shares the host's network stack, so every runner is a host
+   * loopback port, and one server process — Bastion runs one for every session
+   * on the Mac — sees all of them. A fixed port therefore meant one simulator
+   * per process, and worse, a second simulator's calls went to the first one's
+   * runner while every tool reported success.
+   *
+   * So the owner is looked up rather than assumed: the simulator's own runner
+   * wherever it listens; failing that the configured URL, *unless* that is
+   * known to be another simulator's, which is refused. Not knowing the owner
+   * (lsof saw nothing) keeps the configured URL, which is the behaviour from
+   * before ownership was checked.
+   */
+  async runnerUrl(target: SimulatorSummary): Promise<string> {
+    const listeners = await this.listRunners();
+    const id = target.id.toLowerCase();
+    const own = listeners.find((l) => l.udid?.toLowerCase() === id);
+    // An explicit URL is the caller saying where the runner is; honour it,
+    // but still refuse a loopback port that is visibly another simulator's.
+    if (!this.opts.wdaUrl && own) return `http://127.0.0.1:${own.port}`;
+
+    const configured = this.wdaUrl();
+    const port = loopbackPort(configured);
+    const owner =
+      port === undefined ? undefined : listeners.find((l) => l.port === port && l.udid)?.udid;
+    if (owner && owner.toLowerCase() !== id) {
+      const other = (await this.listSimulators()).find(
+        (sim) => sim.id.toLowerCase() === owner.toLowerCase(),
+      );
+      throw new RunnerBelongsElsewhereError({
+        target,
+        owner: other?.name ?? owner,
+        port: port as number,
+        freePort: freePort(listeners, this.opts.wdaPort),
+        allowWrites: this.opts.allowWrites !== false,
+      });
+    }
+    return configured;
+  }
+
+  /**
+   * The WebDriverAgent client for one simulator, one per UDID so each keeps its
+   * own session. The URL is resolved on every request, so a runner restarted on
+   * another port is followed without a server restart.
+   */
+  wda(target: SimulatorSummary): WdaClient {
+    return this.wdaClient(target.id, () => this.runnerUrl(target));
+  }
+
+  /** The configured URL, unchecked — for diagnostics with no single target. */
+  wdaConfigured(): WdaClient {
+    return this.wdaClient("", async () => this.wdaUrl());
+  }
+
+  private wdaClient(key: string, baseUrl: () => Promise<string>): WdaClient {
+    const existing = this.wdaClients.get(key);
     if (existing) return existing;
     const client = new WdaClient({
-      baseUrl: async () => url,
+      baseUrl,
       timeoutMs: this.opts.wdaTimeoutMs,
       remedies: simulatorWdaRemedies(this.opts.allowWrites !== false),
       ...(this.opts.fetch ? { fetch: this.opts.fetch } : {}),
       ...(this.opts.logger ? { logger: this.opts.logger } : {}),
     });
-    this.wdaClients.set(url, client);
+    this.wdaClients.set(key, client);
     return client;
   }
 }
+
+/** The port of a loopback URL, or undefined for anything else. */
+const loopbackPort = (url: string): number | undefined => {
+  try {
+    const parsed = new URL(url);
+    if (!["127.0.0.1", "localhost", "[::1]"].includes(parsed.hostname)) return undefined;
+    const port = Number(parsed.port || (parsed.protocol === "https:" ? 443 : 80));
+    return Number.isInteger(port) ? port : undefined;
+  } catch {
+    return undefined;
+  }
+};

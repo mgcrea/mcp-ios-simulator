@@ -76,7 +76,8 @@ export const registerRunnerTools = (
       description:
         "Start the WebDriverAgent runner, or restart it after it has died. Only the UI tree and " +
         "the input tools need it — screenshots and everything simctl does keep working without " +
-        "it. The runner is started detached so it outlives this conversation, and its output goes " +
+        "it. Each simulator gets its own runner on its own port, so several can be driven at " +
+        "once. The runner is started detached so it outlives this conversation, and its output goes " +
         "to a log file rather than to you. It does not wait: give it fifteen seconds or so, then " +
         "check ios_simulator_diagnostics.",
       inputSchema: z.object({
@@ -88,9 +89,9 @@ export const registerRunnerTools = (
           .max(65535)
           .optional()
           .describe(
-            "Port to bind, passed to the runner as USE_PORT. Defaults to IOS_SIMULATOR_WDA_PORT. " +
-              "Two simulators need two ports: they share this Mac's loopback, and a runner with " +
-              "no USE_PORT scans 8100-8199 and silently takes the next free one.",
+            "Port to bind, passed to the runner as USE_PORT. Leave it out: the simulator's " +
+              "current runner port is reused, or else the first free one from " +
+              "IOS_SIMULATOR_WDA_PORT up, and the other tools find the runner wherever it listens.",
           ),
       }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
@@ -98,7 +99,11 @@ export const registerRunnerTools = (
     async ({ device, port }) =>
       wrap(async () => {
         const target = client.requireBooted(await client.resolveTarget(device));
-        const usePort = port ?? client.wdaPort;
+        // Reusing the simulator's own port replaces its runner in place (XCTest
+        // relaunches the runner app, and the old session ends); a fresh one goes
+        // on the first port nothing holds, never on another simulator's.
+        const usePort =
+          port ?? (await client.ownRunnerPort(target)) ?? (await client.freeRunnerPort());
         const { built, products } = await runnerBuilt();
         if (!built) {
           throw new IosError(
@@ -126,6 +131,7 @@ export const registerRunnerTools = (
           },
           logPath,
         });
+        client.forgetRunners();
         if (pid === undefined) {
           throw new IosError("Could not start the runner — the process had no pid.", {
             remedy: START_RUNNER_SCRIPT_REMEDY,
